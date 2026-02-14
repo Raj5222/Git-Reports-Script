@@ -36,7 +36,7 @@ trap cleanup EXIT
 
 echo ""
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}        Git Record Enterprise Installer${NC}"
+echo -e "${GREEN}        Git Record Installer${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
 echo -e "\n${CYAN}Configuration${NC}"
