@@ -29,68 +29,79 @@ log "Temp Download Path: $TMP_FILE"
 log "Backup Path       : $BACKUP_FILE"
 echo ""
 
-# 1️⃣ Download first
-log "Downloading latest version from:"
-log "$REPO_SCRIPT"
-echo ""
-
+# 1️⃣ Download latest version first
+log "Downloading latest version..."
 if ! curl -# -L "$REPO_SCRIPT" -o "$TMP_FILE"; then
     error "Download failed. Existing installation untouched."
 fi
 
+chmod +x "$TMP_FILE"
+
+NEW_HASH=$(sha256sum "$TMP_FILE" | cut -d ' ' -f1)
 FILE_SIZE=$(du -h "$TMP_FILE" | cut -f1)
-CHECKSUM=$(sha256sum "$TMP_FILE" | cut -d ' ' -f1)
 
 success "Download completed"
 log "Downloaded file size : $FILE_SIZE"
-log "SHA256 checksum      : $CHECKSUM"
-
-chmod +x "$TMP_FILE"
-success "Executable permission applied"
-
+log "New SHA256 checksum  : $NEW_HASH"
 echo ""
 
-# 2️⃣ Backup old version if exists
+# 2️⃣ Compare with existing installation (if exists)
 if [ -f "$INSTALL_PATH" ]; then
-    log "Existing installation detected at:"
-    log "$INSTALL_PATH"
+    CURRENT_HASH=$(sha256sum "$INSTALL_PATH" | cut -d ' ' -f1)
 
-    sudo cp "$INSTALL_PATH" "$BACKUP_FILE" || error "Backup failed"
-    success "Backup created → $BACKUP_FILE"
+    log "Existing installation detected"
+    log "Current SHA256 checksum: $CURRENT_HASH"
+
+    if [ "$NEW_HASH" = "$CURRENT_HASH" ]; then
+        success "Already running latest version (checksum match)"
+        rm -f "$TMP_FILE"
+        exit 0
+    else
+        warn "Checksum differs — upgrade required"
+    fi
 else
     log "No previous installation found"
 fi
 
 echo ""
 
-# 3️⃣ Install new version
+# 3️⃣ Backup existing version (if exists)
+if [ -f "$INSTALL_PATH" ]; then
+    log "Creating backup..."
+    sudo cp "$INSTALL_PATH" "$BACKUP_FILE" || error "Backup failed"
+    success "Backup created → $BACKUP_FILE"
+fi
+
+echo ""
+
+# 4️⃣ Install new version
 log "Installing new version..."
 log "Moving:"
 log "  FROM: $TMP_FILE"
 log "  TO  : $INSTALL_PATH"
 
 if sudo mv -f "$TMP_FILE" "$INSTALL_PATH"; then
-    success "Move successful"
+    success "Installation successful"
 else
     warn "Installation failed — attempting rollback"
 
     if [ -f "$BACKUP_FILE" ]; then
         sudo mv -f "$BACKUP_FILE" "$INSTALL_PATH"
-        error "Rollback complete — previous version restored"
+        error "Rollback completed — previous version restored"
     else
-        error "Rollback failed — no backup available"
+        error "Rollback failed — manual recovery required"
     fi
 fi
 
 echo ""
 
-# 4️⃣ Cleanup backup after success
+# 5️⃣ Cleanup backup after success
 if [ -f "$BACKUP_FILE" ]; then
     sudo rm -f "$BACKUP_FILE"
-    success "Backup removed after successful install"
+    success "Backup removed after successful upgrade"
 fi
 
-# 5️⃣ Final verification
+# 6️⃣ Final verification
 hash -r 2>/dev/null || true
 
 echo ""
@@ -103,8 +114,7 @@ if command -v git-record >/dev/null 2>&1; then
     echo -e "${GREEN}File Details    :${NC}"
     ls -lh "$INSTALL_PATH"
     echo ""
-    echo -e "${GREEN}Installed Version:${NC}"
-    git-record --version 2>/dev/null || echo "Version flag not implemented"
+    echo -e "${GREEN}Final SHA256    :${NC} $(sha256sum "$INSTALL_PATH" | cut -d ' ' -f1)"
 else
     error "Installation failed — binary not found in PATH"
 fi
