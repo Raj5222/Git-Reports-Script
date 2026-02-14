@@ -546,7 +546,7 @@ while getopts ":f:S:Huc:m:d:r:s:k:t:C:TLe:iP:b:VGAXMNh" opt; do
     N) ACT_CI="$OPTARG" ;;
     h) cat << 'EOF'
 ╔════════════════════════════════════════════════════════════════╗
-║              GIT-RECORD v3.0 - ULTIMATE EDITION                ║
+║                           GIT-RECORD                           ║
 ╚════════════════════════════════════════════════════════════════╝
 
 BASIC USAGE:
