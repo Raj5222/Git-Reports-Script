@@ -20,7 +20,12 @@ It works from **any directory**, as long as you are inside a Git repository.
 
 ---
 
-## 📦 Installation
+# 📦Quick Installation
+```
+bash <(curl -fsSL https://raw.githubusercontent.com/raj5222/Git-Reports-Script/main/install.sh)
+```
+---
+## 📦 Manual Installation
 
 ### 1️⃣ Create the script
 
