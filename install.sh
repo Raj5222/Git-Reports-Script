@@ -1,41 +1,52 @@
-cat > install.sh << 'EOF'
 #!/usr/bin/env bash
-
 set -e
 
-REPO_URL="https://raw.githubusercontent.com/raj5222/Git-Reports-Script/main/git-records.sh"
-INSTALL_PATH="/usr/local/bin/git-record"
-
+# ===============================
+#  Git-Record Installer Script
+# ===============================
+echo ""
 echo "========================================"
 echo "        Git Record Installer"
 echo "========================================"
 echo ""
 
-echo "🔽 Downloading git-record..."
-curl -# -L "$REPO_URL" -o git-record
+REPO_SCRIPT="https://raw.githubusercontent.com/raj5222/Git-Reports-Script/main/git-records.sh"
+INSTALL_PATH="/usr/local/bin/git-record"
+
+echo "🔽 Downloading git-record from repository..."
+curl -fsSL "$REPO_SCRIPT" -o git-record
+
+if [[ ! -f git-record ]]; then
+    echo "❌ Download failed. Exiting."
+    exit 1
+fi
 
 echo ""
-echo "🔐 Making executable..."
+echo "🔐 Setting executable permissions..."
 chmod +x git-record
 
-echo "📦 Installing to $INSTALL_PATH ..."
+echo "📦 Installing git-record to $INSTALL_PATH..."
 sudo mv -f git-record "$INSTALL_PATH"
 
 echo ""
-echo "🔄 Refreshing shell..."
+echo "🔄 Refreshing shell cache..."
 hash -r 2>/dev/null || true
 
 echo ""
-echo "✅ Installation completed successfully."
+echo "✅ Installation completed successfully!"
 echo ""
-echo "📌 Try running:"
+echo "📌 You can now run:"
 echo "   git record"
 echo ""
 
 if command -v git-record >/dev/null 2>&1; then
-    echo "🎉 Verification successful: git-record is available."
+    echo "🎉 git-record is available in PATH."
 else
-    echo "⚠️  Warning: git-record not found in PATH."
+    echo "⚠️ git-record is not in PATH. You may need to add /usr/local/bin to your PATH."
 fi
 
-EOF
+echo ""
+echo "========================================"
+echo "        Installation Finished"
+echo "========================================"
+echo ""
