@@ -542,7 +542,6 @@ ACT_COPY_HASH=""
 ACT_COMPARE=""
 ACT_TAGS=""
 ACT_STASH=""
-ACT_EXPORT=""
 ACT_INTERACTIVE=0
 ACT_STATUS=""
 ACT_BULK_DELETE=""
@@ -553,10 +552,11 @@ ACT_GRAPH=""
 ACT_CONFLICTS=""
 ACT_CI=""
 ACT_DIFF=""
+ACT_REALTIME_CI=""
 
 if [[ "$1" =~ ^[0-9]+$ ]]; then LIMIT="$1"; shift; fi
 
-while getopts ":f:S:Huc:m:d:r:s:k:t:C:D:TLe:iP:b:VGAX:M:N:h" opt; do
+while getopts ":f:S:Huc:m:d:r:s:k:t:C:D:TLiP:b:VGAX:M:N:R:h" opt; do
   case ${opt} in
     f) FILTER_NAME="$OPTARG" ;;
     S) FILTER_CODE="$OPTARG"; MODE="CODE_SEARCH" ;;
@@ -573,7 +573,6 @@ while getopts ":f:S:Huc:m:d:r:s:k:t:C:D:TLe:iP:b:VGAX:M:N:h" opt; do
     D) ACT_DIFF="$OPTARG" ;;
     T) ACT_TAGS=1 ;;
     L) ACT_STASH=1 ;;
-    e) ACT_EXPORT="$OPTARG" ;;
     i) ACT_INTERACTIVE=1 ;;
     P) ACT_STATUS="$OPTARG" ;;
     b) ACT_BULK_DELETE="$OPTARG" ;;
@@ -583,6 +582,7 @@ while getopts ":f:S:Huc:m:d:r:s:k:t:C:D:TLe:iP:b:VGAX:M:N:h" opt; do
     X) ACT_STATS="$OPTARG" ;;
     M) ACT_CONFLICTS="$OPTARG" ;;
     N) ACT_CI="$OPTARG" ;;
+    R) ACT_REALTIME_CI="$OPTARG" ;;
     h) cat << 'EOF'
 ╔════════════════════════════════════════════════════════════════╗
 ║                           GIT-RECORD                           ║
@@ -614,7 +614,6 @@ INSPECTION:
 BASIC FEATURES:
   -T          Show repository tags
   -L          Show stash list
-  -e <format> Export data (csv|json|md)
   -i          Interactive mode
 
 🚀 ADVANCED FEATURES (NEW):
@@ -624,6 +623,7 @@ BASIC FEATURES:
   -X <ID>     Detailed branch statistics
   -M <ID>     Predict merge conflicts
   -N <ID>     CI/CD status (GitHub/GitLab)
+  -R <ID> [interval]  Real-time CI/CD monitoring (default: 5s)
 
 API INTEGRATION:
   GitHub: Set GITHUB_TOKEN or GH_TOKEN environment variable
@@ -638,7 +638,9 @@ EXAMPLES:
   git-record -A                   # Get cleanup recommendations
   git-record -X 3                 # Detailed stats for branch #3
   git-record -M 5                 # Check merge conflicts
-  git-record -N 3                 # Check CI/CD status
+  git-record -N 3                 # Check CI/CD status (snapshot)
+  git-record -R 3                 # Monitor CI/CD (5s refresh)
+  git-record -R 3 2               # Monitor CI/CD (2s refresh)
   git-record -C 1:5               # Compare branches 1 and 5
   git-record -D 1:3               # Compare commits 1 and 3
 
@@ -649,8 +651,14 @@ EOF
   esac
 done
 
+# Shift to remove processed options
+shift $((OPTIND - 1))
+
+# Capture any remaining arguments (for refresh interval in -R)
+EXTRA_ARGS=("$@")
+
 # Dynamic Limit Expansion
-for req_id in "$ACT_CHECKOUT" "$ACT_TEAM" "$ACT_MERGE" "$ACT_DELETE" "$ACT_RENAME" "$ACT_SHOW" "$ACT_COPY_HASH" "$ACT_STATUS" "$ACT_STATS" "$ACT_CONFLICTS" "$ACT_CI"; do
+for req_id in "$ACT_CHECKOUT" "$ACT_TEAM" "$ACT_MERGE" "$ACT_DELETE" "$ACT_RENAME" "$ACT_SHOW" "$ACT_COPY_HASH" "$ACT_STATUS" "$ACT_STATS" "$ACT_CONFLICTS" "$ACT_CI" "$ACT_REALTIME_CI"; do
     # Only process if it's a valid number
     if [[ "$req_id" =~ ^[0-9]+$ ]]; then
         if [ "$req_id" -gt "$LIMIT" ]; then 
@@ -713,6 +721,7 @@ validate_comparison() {
 [ -n "$ACT_STATS" ] && validate_branch_id "$ACT_STATS" "-X" "Statistics"
 [ -n "$ACT_CONFLICTS" ] && validate_branch_id "$ACT_CONFLICTS" "-M" "Merge conflicts"
 [ -n "$ACT_CI" ] && validate_branch_id "$ACT_CI" "-N" "CI/CD status"
+[ -n "$ACT_REALTIME_CI" ] && validate_branch_id "$ACT_REALTIME_CI" "-R" "Real-time CI/CD"
 
 # Validate comparison format
 [ -n "$ACT_COMPARE" ] && validate_comparison "$ACT_COMPARE" "-C"
@@ -910,8 +919,8 @@ print_suggestions() {
   printf "  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}\n" "git-record -b <IDs>" "git-record -D <ID:ID>" "git-record -A"
   printf "  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}\n" "(Bulk Delete)" "(Commit Diff)" "(Cleanup)"
   echo
-  printf "  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}\n" "git-record -e csv" "git-record -X <ID>" "git-record -N <ID>"
-  printf "  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}\n" "(Export)" "(Statistics)" "(CI Status)"
+  printf "  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}\n" "git-record -R <ID>" "git-record -X <ID>" "git-record -N <ID>"
+  printf "  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}\n" "(Real-time CI)" "(Statistics)" "(CI Status)"
   echo
   printf "  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}\n" "" "git-record -M <ID>" ""
   printf "  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}\n" "" "(Conflicts)" ""
@@ -1597,59 +1606,434 @@ if [ -n "$ACT_CI" ]; then
 fi
 
 # =========================================================
-# OTHER ACTIONS
+# HELPER FUNCTIONS
 # =========================================================
 
-if [ -n "$ACT_EXPORT" ]; then
-    FORMAT="${ACT_EXPORT,,}"
-    EXPORT_FILE="git-branches-$(date +%Y%m%d-%H%M%S).$FORMAT"
+# Helper function for formatting duration
+format_duration() {
+    local seconds=$1
+    if [ $seconds -lt 60 ]; then
+        echo "${seconds}s"
+    elif [ $seconds -lt 3600 ]; then
+        echo "$((seconds / 60))m $((seconds % 60))s"
+    else
+        echo "$((seconds / 3600))h $(((seconds % 3600) / 60))m"
+    fi
+}
+
+# Helper function for formatting time ago
+format_time_ago() {
+    local then=$1
+    local now=$(date +%s)
+    local diff=$((now - then))
     
-    case "$FORMAT" in
-        csv)
-            echo "ID,Branch,Commit,Date,Author" > "$EXPORT_FILE"
-            for ((i=1; i<=TOTAL_VISIBLE; i++)); do
-                echo "$i,\"${ROWS_BRANCH_TEXT[$i]}\",${ROWS_HASH[$i]},\"${ROWS_DATE[$i]}\",\"${ROWS_AUTHOR[$i]}\"" >> "$EXPORT_FILE"
-            done
-            print_succ "Exported to $EXPORT_FILE"
-            ;;
-        json)
-            if command -v jq >/dev/null 2>&1; then
-                echo "[" > "$EXPORT_FILE"
-                for ((i=1; i<=TOTAL_VISIBLE; i++)); do
-                    [ $i -gt 1 ] && echo "," >> "$EXPORT_FILE"
-                    cat >> "$EXPORT_FILE" <<-EOF
-  {
-    "id": $i,
-    "branch": "${ROWS_BRANCH_TEXT[$i]}",
-    "commit": "${ROWS_HASH[$i]}",
-    "date": "${ROWS_DATE[$i]}",
-    "author": "${ROWS_AUTHOR[$i]}",
-    "timestamp": ${ROWS_AGE_RAW[$i]}
-  }
-EOF
-                done
-                echo "]" >> "$EXPORT_FILE"
-                print_succ "Exported to $EXPORT_FILE"
-            else
-                print_error "jq not installed"
+    if [ $diff -lt 60 ]; then
+        echo "$diff seconds"
+    elif [ $diff -lt 3600 ]; then
+        echo "$((diff / 60)) minutes"
+    elif [ $diff -lt 86400 ]; then
+        echo "$((diff / 3600)) hours"
+    else
+        echo "$((diff / 86400)) days"
+    fi
+}
+
+# =========================================================
+# REAL-TIME CI/CD MONITORING
+# =========================================================
+
+if [ -n "$ACT_REALTIME_CI" ]; then
+    branch="${ROWS_BRANCH_TEXT[$ACT_REALTIME_CI]}"
+    
+    if [ -z "$branch" ]; then
+        echo -e "\n  ${C_RED}✖ Invalid branch ID: $ACT_REALTIME_CI${C_RESET}"
+        echo -e "  ${C_DIM}Available IDs: 1-$TOTAL_VISIBLE${C_RESET}\n"
+        exit 1
+    fi
+    
+    # Parse optional refresh interval (default: 5 seconds)
+    REFRESH_INTERVAL=5
+    if [ -n "${EXTRA_ARGS[0]}" ]; then
+        if [[ "${EXTRA_ARGS[0]}" =~ ^[0-9]+$ ]]; then
+            REFRESH_INTERVAL="${EXTRA_ARGS[0]}"
+            # Validate range (1-60 seconds)
+            if [ "$REFRESH_INTERVAL" -lt 1 ]; then
+                REFRESH_INTERVAL=1
+                echo -e "${C_YELLOW}⚠ Minimum refresh interval is 1s${C_RESET}"
+                sleep 1
+            elif [ "$REFRESH_INTERVAL" -gt 60 ]; then
+                REFRESH_INTERVAL=60
+                echo -e "${C_YELLOW}⚠ Maximum refresh interval is 60s${C_RESET}"
+                sleep 1
             fi
-            ;;
-        md)
-            echo "# Git Branches - $(date)" > "$EXPORT_FILE"
-            echo "" >> "$EXPORT_FILE"
-            echo "| ID | Branch | Commit | Date | Author |" >> "$EXPORT_FILE"
-            echo "|---:|--------|--------|------|--------|" >> "$EXPORT_FILE"
-            for ((i=1; i<=TOTAL_VISIBLE; i++)); do
-                echo "| $i | ${ROWS_BRANCH_TEXT[$i]} | ${ROWS_HASH[$i]} | ${ROWS_DATE[$i]} | ${ROWS_AUTHOR[$i]} |" >> "$EXPORT_FILE"
+        else
+            echo -e "${C_YELLOW}⚠ Invalid interval '${EXTRA_ARGS[0]}', using default 5s${C_RESET}"
+            sleep 1
+        fi
+    fi
+    
+    # Remove remote prefix for API calls
+    clean_branch=$(echo "$branch" | sed 's|^origin/||' | sed 's|^upstream/||')
+    
+    platform=$(detect_remote_platform)
+    
+    if [ -z "$platform" ]; then
+        echo -e "\n  ${C_YELLOW}⚠ Could not detect Git platform${C_RESET}"
+        echo -e "  ${C_DIM}Supported: GitHub, GitLab (including self-hosted)${C_RESET}\n"
+        exit 1
+    fi
+    
+    # Get repository info
+    if [ "$platform" == "github" ]; then
+        repo=$(parse_github_repo)
+    else
+        repo=$(parse_gitlab_repo)
+    fi
+    
+    # Initial clear and header setup
+    clear
+    
+    # Trap Ctrl+C for clean exit
+    trap 'clear; echo -e "\n${C_YELLOW}⊗ Monitoring stopped${C_RESET}\n"; exit 0' INT
+    
+    # Initialize tracking variables
+    last_status=""
+    last_pipeline_id=""
+    iteration=0
+    start_time=$(date +%s)
+    
+    # Main monitoring loop
+    while true; do
+        iteration=$((iteration + 1))
+        current_time=$(date '+%H:%M:%S')
+        elapsed=$(($(date +%s) - start_time))
+        
+        # Clear screen completely for each update to prevent content mixup
+        clear
+        
+        # Premium header
+        echo -e "${C_BOLD}${C_CYAN}╔════════════════════════════════════════════════════════════════╗${C_RESET}"
+        echo -e "${C_BOLD}${C_CYAN}║                                                                ║${C_RESET}"
+        echo -e "${C_BOLD}${C_CYAN}║${C_RESET}        ${C_RED}●${C_RESET} ${C_BOLD}LIVE CI/CD MONITORING${C_RESET}  ${C_DIM}Press Ctrl+C to exit${C_RESET}      ${C_BOLD}${C_CYAN}║${C_RESET}"
+        echo -e "${C_BOLD}${C_CYAN}║                                                                ║${C_RESET}"
+        echo -e "${C_BOLD}${C_CYAN}╚════════════════════════════════════════════════════════════════╝${C_RESET}\n"
+        
+        # Info bar
+        platform_icon=$([ "$platform" == "github" ] && echo "🐙" || echo "🦊")
+        platform_name=$([ "$platform" == "github" ] && echo "GitHub" || echo "GitLab")
+        
+        echo -e "  ${C_HEADER}┌─ Configuration${C_RESET}"
+        echo -e "  ${C_HEADER}│${C_RESET}"
+        echo -e "  ${C_HEADER}├─${C_RESET} ${C_CYAN}Branch:${C_RESET}   ${C_BOLD}$branch${C_RESET}"
+        echo -e "  ${C_HEADER}├─${C_RESET} ${C_CYAN}Platform:${C_RESET} $platform_icon ${C_BOLD}$platform_name${C_RESET}"
+        
+        if [ "$platform" == "gitlab" ]; then
+            gitlab_domain=$(get_gitlab_domain)
+            echo -e "  ${C_HEADER}├─${C_RESET} ${C_CYAN}Server:${C_RESET}   ${C_BOLD}$gitlab_domain${C_RESET}"
+        fi
+        
+        echo -e "  ${C_HEADER}├─${C_RESET} ${C_CYAN}Refresh:${C_RESET}  ${C_BOLD}Every ${REFRESH_INTERVAL}s${C_RESET}"
+        echo -e "  ${C_HEADER}└─${C_RESET}\n"
+        
+        echo -e "${C_BOLD}${C_DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RESET}\n"
+        
+        # Update header
+        echo -e "  ${C_BOLD}${C_HEADER}╭─ Update #$iteration${C_RESET} ${C_DIM}│${C_RESET} ${C_CYAN}$current_time${C_RESET} ${C_DIM}│${C_RESET} ${C_DIM}Runtime: $(format_duration $elapsed)${C_RESET}"
+        echo -e "  ${C_HEADER}│${C_RESET}"
+        
+        # Fetch and display status based on platform
+        if [ "$platform" == "github" ]; then
+            # GitHub monitoring
+            workflows=$(fetch_github_workflows "$repo" "$clean_branch")
+            
+            if [ -n "$workflows" ] && [ "$workflows" != "null" ]; then
+                run_count=$(echo "$workflows" | jq '.total_count' 2>/dev/null)
+                
+                if [ "$run_count" -gt 0 ]; then
+                    run_id=$(echo "$workflows" | jq -r '.workflow_runs[0].id' 2>/dev/null)
+                    run_name=$(echo "$workflows" | jq -r '.workflow_runs[0].name' 2>/dev/null)
+                    run_status=$(echo "$workflows" | jq -r '.workflow_runs[0].status' 2>/dev/null)
+                    run_conclusion=$(echo "$workflows" | jq -r '.workflow_runs[0].conclusion' 2>/dev/null)
+                    run_number=$(echo "$workflows" | jq -r '.workflow_runs[0].run_number' 2>/dev/null)
+                    run_created=$(echo "$workflows" | jq -r '.workflow_runs[0].created_at' 2>/dev/null)
+                    run_updated=$(echo "$workflows" | jq -r '.workflow_runs[0].updated_at' 2>/dev/null)
+                    
+                    # Detect status change
+                    current_status="${run_status}-${run_conclusion}"
+                    if [ "$current_status" != "$last_status" ] && [ -n "$last_status" ]; then
+                        echo -e "  ${C_HEADER}├─${C_RESET} ${C_YELLOW}⚡ STATUS CHANGED${C_RESET} ${C_DIM}${last_status}${C_RESET} → ${C_BOLD}${current_status}${C_RESET}"
+                        echo -e "  ${C_HEADER}│${C_RESET}"
+                    fi
+                    last_status="$current_status"
+                    
+                    # Status badge with animation
+                    if [ "$run_status" == "completed" ]; then
+                        case "$run_conclusion" in
+                            success) echo -e "  ${C_HEADER}├─${C_RESET} ${C_GREEN}●●●●●●●●●●${C_RESET} ${C_BOLD}${C_GREEN}PASSED${C_RESET} ✓" ;;
+                            failure) echo -e "  ${C_HEADER}├─${C_RESET} ${C_RED}●●●●●●●●●●${C_RESET} ${C_BOLD}${C_RED}FAILED${C_RESET} ✗" ;;
+                            cancelled) echo -e "  ${C_HEADER}├─${C_RESET} ${C_YELLOW}○○○○○○○○○○${C_RESET} ${C_BOLD}${C_YELLOW}CANCELLED${C_RESET} ⊗" ;;
+                            *) echo -e "  ${C_HEADER}├─${C_RESET} ${C_DIM}○○○○○○○○○○${C_RESET} ${C_BOLD}${run_conclusion^^}${C_RESET}" ;;
+                        esac
+                    elif [ "$run_status" == "in_progress" ]; then
+                        # Animated progress
+                        progress_pos=$((iteration % 10))
+                        progress_bar=""
+                        for i in {0..9}; do
+                            [ $i -eq $progress_pos ] && progress_bar="${progress_bar}${C_YELLOW}●${C_RESET}" || progress_bar="${progress_bar}${C_DIM}○${C_RESET}"
+                        done
+                        echo -e "  ${C_HEADER}├─${C_RESET} ${progress_bar} ${C_BOLD}${C_YELLOW}RUNNING${C_RESET} ⏳"
+                    elif [ "$run_status" == "queued" ]; then
+                        echo -e "  ${C_HEADER}├─${C_RESET} ${C_CYAN}○○○○○○○○○○${C_RESET} ${C_BOLD}${C_CYAN}QUEUED${C_RESET} ○"
+                    fi
+                    
+                    echo -e "  ${C_HEADER}├─${C_RESET} ${C_DIM}Workflow: ${C_RESET}${run_name}  ${C_DIM}│${C_RESET}  ${C_DIM}Run: ${C_RESET}#$run_number  ${C_DIM}│${C_RESET}  ${C_DIM}ID: ${C_RESET}$run_id"
+                    echo -e "  ${C_HEADER}│${C_RESET}"
+                    
+                    # Timeline
+                    if [ "$run_created" != "null" ] && [ -n "$run_created" ]; then
+                        created_ts=$(date -d "$run_created" +%s 2>/dev/null || echo "")
+                        now_ts=$(date +%s)
+                        
+                        if [ -n "$created_ts" ] && [ "$run_updated" != "null" ] && [ -n "$run_updated" ]; then
+                            updated_ts=$(date -d "$run_updated" +%s 2>/dev/null || echo "")
+                            if [ -n "$updated_ts" ]; then
+                                duration=$((updated_ts - created_ts))
+                                elapsed_since_start=$((now_ts - created_ts))
+                                
+                                if [ "$run_status" == "in_progress" ]; then
+                                    echo -e "  ${C_HEADER}├─${C_RESET} ${C_CYAN}Duration:${C_RESET} ${C_BOLD}$(format_duration $elapsed_since_start)${C_RESET} ${C_DIM}(running)${C_RESET}"
+                                else
+                                    echo -e "  ${C_HEADER}├─${C_RESET} ${C_CYAN}Duration:${C_RESET} ${C_BOLD}$(format_duration $duration)${C_RESET}"
+                                    echo -e "  ${C_HEADER}├─${C_RESET} ${C_CYAN}Finished:${C_RESET} ${C_DIM}$(format_time_ago $updated_ts) ago${C_RESET}"
+                                fi
+                            fi
+                        fi
+                    fi
+                    
+                    # Jobs
+                    jobs=$(fetch_github_workflow_jobs "$repo" "$run_id")
+                    if [ -n "$jobs" ]; then
+                        job_count=$(echo "$jobs" | jq '.total_count' 2>/dev/null)
+                        
+                        if [ "$job_count" -gt 0 ]; then
+                            echo -e "  ${C_HEADER}│${C_RESET}"
+                            echo -e "  ${C_HEADER}├─${C_RESET} ${C_BOLD}Jobs Summary${C_RESET} ${C_DIM}($job_count total)${C_RESET}"
+                            
+                            success=$(echo "$jobs" | jq '[.jobs[] | select(.conclusion=="success")] | length' 2>/dev/null)
+                            failed=$(echo "$jobs" | jq '[.jobs[] | select(.conclusion=="failure")] | length' 2>/dev/null)
+                            running=$(echo "$jobs" | jq '[.jobs[] | select(.status=="in_progress")] | length' 2>/dev/null)
+                            queued=$(echo "$jobs" | jq '[.jobs[] | select(.status=="queued")] | length' 2>/dev/null)
+                            
+                            echo -e "  ${C_HEADER}├─${C_RESET} ${C_GREEN}✓ $success${C_RESET}  ${C_RED}✗ $failed${C_RESET}  ${C_YELLOW}⏳ $running${C_RESET}  ${C_CYAN}○ $queued${C_RESET}"
+                            echo -e "  ${C_HEADER}│${C_RESET}"
+                            
+                            # Show jobs (max 15 to prevent screen overflow)
+                            local job_num=0
+                            echo "$jobs" | jq -r '.jobs[] | "\(.name)|\(.status)|\(.conclusion)|\(.started_at)|\(.completed_at)"' 2>/dev/null | head -15 | while IFS='|' read -r name status conclusion started completed; do
+                                job_num=$((job_num + 1))
+                                
+                                case "$status" in
+                                    completed)
+                                        case "$conclusion" in
+                                            success) icon="${C_GREEN}✓${C_RESET}" ;;
+                                            failure) icon="${C_RED}✗${C_RESET}" ;;
+                                            *) icon="${C_DIM}?${C_RESET}" ;;
+                                        esac
+                                        ;;
+                                    in_progress) icon="${C_YELLOW}⏳${C_RESET}" ;;
+                                    *) icon="${C_CYAN}○${C_RESET}" ;;
+                                esac
+                                
+                                # Duration
+                                dur_str="-"
+                                if [ "$started" != "null" ] && [ "$completed" != "null" ]; then
+                                    start_ts=$(date -d "$started" +%s 2>/dev/null || echo "")
+                                    complete_ts=$(date -d "$completed" +%s 2>/dev/null || echo "")
+                                    if [ -n "$start_ts" ] && [ -n "$complete_ts" ]; then
+                                        dur=$((complete_ts - start_ts))
+                                        dur_str=$(format_duration $dur)
+                                    fi
+                                elif [ "$started" != "null" ] && [ "$status" == "in_progress" ]; then
+                                    start_ts=$(date -d "$started" +%s 2>/dev/null || echo "")
+                                    if [ -n "$start_ts" ]; then
+                                        dur=$((now_ts - start_ts))
+                                        dur_str="${C_YELLOW}$(format_duration $dur)${C_RESET} ${C_DIM}...${C_RESET}"
+                                    fi
+                                fi
+                                
+                                # Truncate long names
+                                if [ ${#name} -gt 45 ]; then
+                                    name="${name:0:42}..."
+                                fi
+                                
+                                echo -e "  ${C_HEADER}├──${C_RESET} $icon  ${C_DIM}$(printf '%-45s' "$name")${C_RESET}  $dur_str"
+                            done
+                            
+                            if [ "$job_count" -gt 15 ]; then
+                                echo -e "  ${C_HEADER}├──${C_RESET} ${C_DIM}... and $((job_count - 15)) more jobs${C_RESET}"
+                            fi
+                        fi
+                    fi
+                else
+                    echo -e "  ${C_HEADER}├─${C_RESET} ${C_YELLOW}⚠ No workflows found${C_RESET}"
+                fi
+            else
+                echo -e "  ${C_HEADER}├─${C_RESET} ${C_YELLOW}⚠ No workflow data available${C_RESET}"
+            fi
+            
+        else
+            # GitLab monitoring
+            status=$(fetch_gitlab_ci_status "$repo" "$clean_branch")
+            
+            if [ -n "$status" ] && command -v jq >/dev/null 2>&1; then
+                pipeline=$(echo "$status" | jq -r '.last_pipeline.status' 2>/dev/null)
+                pipeline_id=$(echo "$status" | jq -r '.last_pipeline.id' 2>/dev/null)
+                
+                # Detect change
+                if [ "$pipeline_id" != "$last_pipeline_id" ] && [ -n "$last_pipeline_id" ]; then
+                    echo -e "  ${C_HEADER}├─${C_RESET} ${C_YELLOW}⚡ NEW PIPELINE${C_RESET} ${C_DIM}#$last_pipeline_id${C_RESET} → ${C_BOLD}#$pipeline_id${C_RESET}"
+                    echo -e "  ${C_HEADER}│${C_RESET}"
+                fi
+                last_pipeline_id="$pipeline_id"
+                
+                # Status badge
+                case "$pipeline" in
+                    success) echo -e "  ${C_HEADER}├─${C_RESET} ${C_GREEN}●●●●●●●●●●${C_RESET} ${C_BOLD}${C_GREEN}PASSED${C_RESET} ✓" ;;
+                    running)
+                        progress_pos=$((iteration % 10))
+                        progress_bar=""
+                        for i in {0..9}; do
+                            [ $i -eq $progress_pos ] && progress_bar="${progress_bar}${C_YELLOW}●${C_RESET}" || progress_bar="${progress_bar}${C_DIM}○${C_RESET}"
+                        done
+                        echo -e "  ${C_HEADER}├─${C_RESET} ${progress_bar} ${C_BOLD}${C_YELLOW}RUNNING${C_RESET} ⏳"
+                        ;;
+                    failed) echo -e "  ${C_HEADER}├─${C_RESET} ${C_RED}●●●●●●●●●●${C_RESET} ${C_BOLD}${C_RED}FAILED${C_RESET} ✗" ;;
+                    pending) echo -e "  ${C_HEADER}├─${C_RESET} ${C_CYAN}○○○○○○○○○○${C_RESET} ${C_BOLD}${C_CYAN}PENDING${C_RESET} ○" ;;
+                    manual) echo -e "  ${C_HEADER}├─${C_RESET} ${C_BLUE}⚙⚙⚙⚙⚙⚙⚙⚙⚙⚙${C_RESET} ${C_BOLD}${C_BLUE}MANUAL${C_RESET} ⚙" ;;
+                    canceled) echo -e "  ${C_HEADER}├─${C_RESET} ${C_YELLOW}○○○○○○○○○○${C_RESET} ${C_BOLD}${C_YELLOW}CANCELED${C_RESET} ⊗" ;;
+                    skipped) echo -e "  ${C_HEADER}├─${C_RESET} ${C_DIM}⊘⊘⊘⊘⊘⊘⊘⊘⊘⊘${C_RESET} ${C_BOLD}${C_DIM}SKIPPED${C_RESET} ⊘" ;;
+                    created) echo -e "  ${C_HEADER}├─${C_RESET} ${C_CYAN}○○○○○○○○○○${C_RESET} ${C_BOLD}${C_CYAN}CREATED${C_RESET} ○" ;;
+                    *) echo -e "  ${C_HEADER}├─${C_RESET} ${C_DIM}??????????${C_RESET} ${C_BOLD}${pipeline^^}${C_RESET}" ;;
+                esac
+                
+                pipeline_iid=$(echo "$status" | jq -r '.last_pipeline.iid' 2>/dev/null)
+                echo -e "  ${C_HEADER}├─${C_RESET} ${C_DIM}Pipeline: ${C_RESET}#$pipeline_iid  ${C_DIM}│${C_RESET}  ${C_DIM}ID: ${C_RESET}$pipeline_id"
+                echo -e "  ${C_HEADER}│${C_RESET}"
+                
+                # Timeline
+                pipeline_created=$(echo "$status" | jq -r '.last_pipeline.created_at' 2>/dev/null)
+                pipeline_updated=$(echo "$status" | jq -r '.last_pipeline.updated_at' 2>/dev/null)
+                
+                if [ "$pipeline_created" != "null" ]; then
+                    created_ts=$(date -d "$pipeline_created" +%s 2>/dev/null || echo "")
+                    now_ts=$(date +%s)
+                    
+                    if [ -n "$created_ts" ] && [ "$pipeline_updated" != "null" ]; then
+                        updated_ts=$(date -d "$pipeline_updated" +%s 2>/dev/null || echo "")
+                        if [ -n "$updated_ts" ]; then
+                            duration=$((updated_ts - created_ts))
+                            elapsed=$((now_ts - created_ts))
+                            
+                            if [ "$pipeline" == "running" ]; then
+                                echo -e "  ${C_HEADER}├─${C_RESET} ${C_CYAN}Duration:${C_RESET} ${C_BOLD}$(format_duration $elapsed)${C_RESET} ${C_DIM}(running)${C_RESET}"
+                            else
+                                echo -e "  ${C_HEADER}├─${C_RESET} ${C_CYAN}Duration:${C_RESET} ${C_BOLD}$(format_duration $duration)${C_RESET}"
+                                echo -e "  ${C_HEADER}├─${C_RESET} ${C_CYAN}Finished:${C_RESET} ${C_DIM}$(format_time_ago $updated_ts) ago${C_RESET}"
+                            fi
+                        fi
+                    fi
+                fi
+                
+                # Jobs
+                if [ "$pipeline_id" != "null" ]; then
+                    jobs=$(fetch_gitlab_pipeline_details "$repo" "$pipeline_id")
+                    
+                    if [ -n "$jobs" ] && [ "$jobs" != "[]" ]; then
+                        job_count=$(echo "$jobs" | jq 'length' 2>/dev/null)
+                        
+                        if [ "$job_count" -gt 0 ]; then
+                            echo -e "  ${C_HEADER}│${C_RESET}"
+                            echo -e "  ${C_HEADER}├─${C_RESET} ${C_BOLD}Jobs Summary${C_RESET} ${C_DIM}($job_count total)${C_RESET}"
+                            
+                            success=$(echo "$jobs" | jq '[.[] | select(.status=="success")] | length' 2>/dev/null)
+                            failed=$(echo "$jobs" | jq '[.[] | select(.status=="failed")] | length' 2>/dev/null)
+                            running=$(echo "$jobs" | jq '[.[] | select(.status=="running")] | length' 2>/dev/null)
+                            pending=$(echo "$jobs" | jq '[.[] | select(.status=="pending")] | length' 2>/dev/null)
+                            created=$(echo "$jobs" | jq '[.[] | select(.status=="created")] | length' 2>/dev/null)
+                            manual=$(echo "$jobs" | jq '[.[] | select(.status=="manual")] | length' 2>/dev/null)
+                            
+                            echo -e "  ${C_HEADER}├─${C_RESET} ${C_GREEN}✓ $success${C_RESET}  ${C_RED}✗ $failed${C_RESET}  ${C_YELLOW}⏳ $running${C_RESET}  ${C_CYAN}○ $((pending + created))${C_RESET}  ${C_BLUE}⚙ $manual${C_RESET}"
+                            echo -e "  ${C_HEADER}│${C_RESET}"
+                            
+                            # Show jobs (max 15)
+                            echo "$jobs" | jq -r '.[] | "\(.stage)|\(.name)|\(.status)|\(.duration)"' 2>/dev/null | head -15 | while IFS='|' read -r stage name stat duration; do
+                                case "$stat" in
+                                    success) icon="${C_GREEN}✓${C_RESET}" ;;
+                                    failed) icon="${C_RED}✗${C_RESET}" ;;
+                                    running) icon="${C_YELLOW}⏳${C_RESET}" ;;
+                                    pending|created) icon="${C_CYAN}○${C_RESET}" ;;
+                                    manual) icon="${C_BLUE}⚙${C_RESET}" ;;
+                                    *) icon="${C_DIM}?${C_RESET}" ;;
+                                esac
+                                
+                                # Duration
+                                dur_str="-"
+                                if [ "$duration" != "null" ] && [ -n "$duration" ]; then
+                                    duration_int=$(echo "$duration" | cut -d. -f1)
+                                    if [ -n "$duration_int" ] && [ "$duration_int" != "null" ]; then
+                                        dur_str=$(format_duration $duration_int)
+                                    fi
+                                fi
+                                
+                                # Truncate long names
+                                if [ ${#name} -gt 30 ]; then
+                                    name="${name:0:27}..."
+                                fi
+                                
+                                echo -e "  ${C_HEADER}├──${C_RESET} $icon  ${C_DIM}$(printf '%-12s' "$stage")${C_RESET}  $(printf '%-30s' "$name")  ${C_DIM}$dur_str${C_RESET}"
+                            done
+                            
+                            if [ "$job_count" -gt 15 ]; then
+                                echo -e "  ${C_HEADER}├──${C_RESET} ${C_DIM}... and $((job_count - 15)) more jobs${C_RESET}"
+                            fi
+                        fi
+                    fi
+                fi
+            fi
+        fi
+        
+        # Footer
+        echo -e "  ${C_HEADER}│${C_RESET}"
+        echo -e "  ${C_HEADER}╰─${C_RESET}${C_BOLD}${C_DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RESET}"
+        
+        # Countdown with progress bar
+        for ((i=REFRESH_INTERVAL; i>0; i--)); do
+            progress=$((100 - (i * 100 / REFRESH_INTERVAL)))
+            bar_length=$((progress / 2))
+            bar=""
+            for ((j=0; j<50; j++)); do
+                if [ $j -lt $bar_length ]; then
+                    bar="${bar}${C_CYAN}━${C_RESET}"
+                else
+                    bar="${bar}${C_DIM}━${C_RESET}"
+                fi
             done
-            print_succ "Exported to $EXPORT_FILE"
-            ;;
-        *)
-            print_error "Unknown format. Use: csv, json, or md"
-            ;;
-    esac
+            
+            echo -ne "\r  ${C_DIM}Next refresh:${C_RESET} ${bar} ${C_BOLD}${i}s${C_RESET}  ${C_DIM}│${C_RESET}  ${C_DIM}Press Ctrl+C to stop${C_RESET}     "
+            sleep 1
+        done
+        
+        # Small delay before next refresh to show "Refreshing..."
+        echo -ne "\r  ${C_DIM}Refreshing...${C_RESET}                                                                       \r"
+        sleep 0.1
+    done
+    
     exit 0
 fi
+
+# =========================================================
+# OTHER ACTIONS
+# =========================================================
 
 if [ -n "$ACT_COMPARE" ]; then
     IFS=':' read -r ID1 ID2 <<< "$ACT_COMPARE"
