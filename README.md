@@ -1,6 +1,6 @@
 # 📘 Git Records
 
-`git-records` is a **global Git utility** that displays recent Git branches in a **clean, numbered, tabular format** with strict validation and professional error handling.
+`git-record` is a **global Git utility** that displays recent Git branches in a **clean, numbered, tabular format** with strict validation and professional error handling.
 
 It works from **any directory**, as long as you are inside a Git repository.
 
@@ -10,7 +10,7 @@ It works from **any directory**, as long as you are inside a Git repository.
 
 * ✅ Works as a **global command**
 * ✅ Default shows **latest 10 records**
-* ✅ Accepts a numeric limit (`git-records 5`)
+* ✅ Accepts a numeric limit (`git-record 5`)
 * ✅ Clean **lined table**
 * ✅ **Local / Remote** branch separation
 * ✅ **Current branch highlighted**
@@ -129,7 +129,7 @@ git-record clear
 ┌─ ERROR ───────────────────────────────────────────────┐
 │ Message : Invalid argument                            │
 │ Hint    : Please provide a positive number            │
-│ Example : git-records 10                              │
+│ Example : git-record 10                               │
 └───────────────────────────────────────────────────────┘
 ```
 
@@ -145,7 +145,7 @@ git-record 0
 ┌─ ERROR ───────────────────────────────────────────────┐
 │ Message : Invalid limit value                         │
 │ Hint    : Limit must be greater than zero             │
-│ Example : git-records 5                               │
+│ Example : git-record 5                               │
 └───────────────────────────────────────────────────────┘
 ```
 
@@ -161,7 +161,7 @@ git-record 999999999999999
 ┌─ ERROR ───────────────────────────────────────────────┐
 │ Message : Limit value is too large                    │
 │ Hint    : Please provide a reasonable number          │
-│ Example : git-records 100                             │
+│ Example : git-record 100                              │
 └───────────────────────────────────────────────────────┘
 ```
 
