@@ -32,7 +32,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/raj5222/Git-Reports-Script/m
 Create the file:
 
 ```bash
-sudo nano /usr/local/bin/git-records
+sudo nano /usr/local/bin/git-record
 ```
 
 Paste the **full script** provided earlier into this file.
@@ -44,7 +44,7 @@ Save and exit (`CTRL + O`, `ENTER`, `CTRL + X`).
 ### 2️⃣ Make it executable
 
 ```bash
-sudo chmod +x /usr/local/bin/git-records
+sudo chmod +x /usr/local/bin/git-record
 ```
 
 ---
@@ -52,13 +52,13 @@ sudo chmod +x /usr/local/bin/git-records
 ### 3️⃣ Verify installation
 
 ```bash
-which git-records
+which git-record
 ```
 
 Expected output:
 
 ```text
-/usr/local/bin/git-records
+/usr/local/bin/git-record
 ```
 
 ---
@@ -68,7 +68,7 @@ Expected output:
 ### Default (shows latest 10)
 
 ```bash
-git-records
+git-record
 ```
 
 ---
@@ -76,9 +76,9 @@ git-records
 ### Show latest N records
 
 ```bash
-git-records 5
-git-records 20
-git-records 100
+git-record 5
+git-record 20
+git-record 100
 ```
 
 ---
@@ -88,7 +88,7 @@ git-records 100
 Because the script name starts with `git-`, you can also run:
 
 ```bash
-git records
+git record
 ```
 
 ---
@@ -96,7 +96,7 @@ git records
 ## 📊 Output Example
 
 ```text
-Git Records
+Git Record
 Repository : /home/user/project
 --------------------------------
 Current Branch : feature/new-api
@@ -122,7 +122,7 @@ Showing Latest : 10
 ### Invalid argument
 
 ```bash
-git-records clear
+git-record clear
 ```
 
 ```text
@@ -138,7 +138,7 @@ git-records clear
 ### Zero or negative value
 
 ```bash
-git-records 0
+git-record 0
 ```
 
 ```text
@@ -154,7 +154,7 @@ git-records 0
 ### Very large / unsafe number
 
 ```bash
-git-records 999999999999999
+git-record 999999999999999
 ```
 
 ```text
@@ -170,7 +170,7 @@ git-records 999999999999999
 ### Not inside a Git repository
 
 ```bash
-git-records
+git-record
 ```
 
 ```text
@@ -200,7 +200,7 @@ Anything else → **error and stop**.
 To remove the command:
 
 ```bash
-sudo rm /usr/local/bin/git-records
+sudo rm /usr/local/bin/git-record
 ```
 
 ---
