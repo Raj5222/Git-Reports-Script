@@ -145,7 +145,7 @@ git-record 0
 ┌─ ERROR ───────────────────────────────────────────────┐
 │ Message : Invalid limit value                         │
 │ Hint    : Limit must be greater than zero             │
-│ Example : git-record 5                               │
+│ Example : git-record 5                                │
 └───────────────────────────────────────────────────────┘
 ```
 
