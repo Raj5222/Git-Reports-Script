@@ -7,6 +7,7 @@ DEFAULT_LIMIT=10
 STALE_DAYS=90 
 CLEANUP_THRESHOLD=60
 VELOCITY_DAYS=30
+MAX_INTERVAL=1000
 
 C_RESET=$'\e[0m'
 C_BOLD=$'\e[1m'
@@ -1661,9 +1662,9 @@ if [ -n "$ACT_REALTIME_CI" ]; then
                 REFRESH_INTERVAL=1
                 echo -e "${C_YELLOW}⚠ Minimum refresh interval is 1s${C_RESET}"
                 sleep 1
-            elif [ "$REFRESH_INTERVAL" -gt 60 ]; then
-                REFRESH_INTERVAL=60
-                echo -e "${C_YELLOW}⚠ Maximum refresh interval is 60s${C_RESET}"
+            elif [ "$REFRESH_INTERVAL" -gt $MAX_INTERVAL ]; then
+                REFRESH_INTERVAL=$MAX_INTERVAL
+                echo -e "${C_YELLOW}⚠ Maximum refresh interval is ${MAX_INTERVAL}s${C_RESET}"
                 sleep 1
             fi
         else
