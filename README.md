@@ -1,214 +1,167 @@
-# 📘 Git Records
+# 📘 Git Records v2.0 (Multi-Platform CLI & Workflow Suite)
 
-`git-record` is a **global Git utility** that displays recent Git branches in a **clean, numbered, tabular format** with strict validation and professional error handling.
+`git-record` is a **high-performance, cross-platform Git branch manager, interactive workflow CLI, and analytics tool** designed for modern developers across **Ubuntu/Linux, macOS, and Windows**.
 
-It works from **any directory**, as long as you are inside a Git repository.
-
----
-
-## ✨ Features
-
-* ✅ Works as a **global command**
-* ✅ Default shows **latest 10 records**
-* ✅ Accepts a numeric limit (`git-record 5`)
-* ✅ Clean **lined table**
-* ✅ **Local / Remote** branch separation
-* ✅ **Current branch highlighted**
-* ✅ Strict input validation
-* ✅ **Red highlighted error boxes**
-* ✅ No raw Git or shell errors
+It works seamlessly from **any directory** inside any Git repository.
 
 ---
 
-# 📦Quick Installation
-```
+## 💻 Multi-OS & Platform Support
+
+| Operating System | Compatibility | Clipboard Engine | Date/Time Engine |
+|---|---|---|---|
+| 🐧 **Ubuntu / Debian / Linux** | ✅ Fully supported (x86_64, aarch64, arm64) | `wl-copy` (Wayland), `xclip`, `xsel` | GNU Coreutils |
+| 🍎 **macOS (Darwin)** | ✅ Fully supported (Apple Silicon M1/M2/M3/M4 & Intel) | `pbcopy` | BSD Coreutils |
+| 🪟 **Windows** | ✅ Fully supported (Git Bash, MSYS2, MinGW64, WSL 1/2) | `clip.exe`, PowerShell `Set-Clipboard` | MSYS / GNU |
+| 🌐 **SSH / Remote Servers** | ✅ Supported across any terminal | `OSC 52` ANSI Terminal Escape | Automatic Epoch Fallback |
+
+---
+
+## ✨ Key Features & Highlights
+
+- ⚡ **Ultra-Fast Engine**: Pure Bash parameter parsing and single-pass queries; loads 1,000+ branches instantly without lag.
+- 🎨 **Modern Responsive UI**: Dynamic terminal width detection, 256-color gradient themes, Unicode box drawing, and automatic ASCII fallback.
+- 🛡️ **Built-In Safety Protections**: Protected branch deletion warnings (`main`, `master`, `production`), unmerged commit checks, and working tree validation.
+- 📦 **Pixel-Perfect Error Boxes**: Clear, non-intrusive error summaries with helpful hints and copy-pasteable examples.
+- 🎮 **Interactive Selector (FZF & TUI)**: Fuzzy search branches, live diff preview pane, and single-key actions (`Enter` to checkout, `Ctrl-S` to inspect, `Ctrl-D` to delete).
+- 🔍 **Conflict Prediction & Divergence**: Identifies merge conflicts and file collisions in advance before merging.
+- 📊 **Team Velocity & Health**: 30-day commit velocity sparklines, contributor volume distributions, and daily activity trends.
+- 🦊 **CI/CD Integration**: GitHub Actions and GitLab CI status checks via native CLI (`gh`/`glab`) or REST APIs with real-time live monitoring.
+- 🩺 **System Diagnostics (`--sys-info`)**: Built-in environment inspector showing detected OS, architecture, clipboard tools, and optional dependencies.
+
+---
+
+## 📦 Quick Installation
+
+### One-line automatic install (Ubuntu, macOS, Windows Git Bash):
+```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/raj5222/Git-Reports-Script/main/install.sh)
 ```
----
-## 📦 Manual Installation
 
-### 1️⃣ Create the script
-
-Create the file:
-
+### User-space install (No sudo required):
 ```bash
-sudo nano /usr/local/bin/git-record
+bash <(curl -fsSL https://raw.githubusercontent.com/raj5222/Git-Reports-Script/main/install.sh) --user
 ```
 
-Paste the **full script** provided earlier into this file.
-
-Save and exit (`CTRL + O`, `ENTER`, `CTRL + X`).
-
----
-
-### 2️⃣ Make it executable
-
+### Manual installation from repository:
 ```bash
+# Ubuntu / Linux / macOS
+sudo cp git-records.sh /usr/local/bin/git-record
 sudo chmod +x /usr/local/bin/git-record
+
+# Windows (Git Bash / MSYS2)
+cp git-records.sh /usr/bin/git-record
+chmod +x /usr/bin/git-record
+```
+
+### Verify installation & environment:
+```bash
+git-record --version
+git-record --sys-info
 ```
 
 ---
 
-### 3️⃣ Verify installation
+## 🚀 Usage & Quick Start
 
+### 1. View Branch Table
 ```bash
-which git-record
+git-record          # Show top 10 recent branches
+git-record 25       # Show top 25 branches
+git-record -a       # Show all branches
+git-record -l       # Show local branches only
+git-record -r       # Show remote branches only
+git-record -f api   # Filter branches matching 'api'
 ```
 
-Expected output:
+### 2. Output Example
+```text
+  📦 GIT-REPORTS-SCRIPT   🌿 main   ✨ clean
+  Local: 4   Remote: 28   Total Shown: 10/32
+
+  ┌──────┬────────┬────────────────────────────────┬───────┬──────────┬───────────────┬──────────────┐
+  │  NO  │  TYPE  │ BRANCH NAME                    │ SYNC  │  COMMIT  │ LAST UPDATED  │ AUTHOR       │
+  ├──────┼────────┼────────────────────────────────┼───────┼──────────┼───────────────┼──────────────┤
+  │  1   │ LOCAL  │ ➜ feature/new-api              │  ↑2   │ 7f8a91c  │ 2 hours ago   │ Alex Chen    │
+  │  2   │ REMOTE │ origin/feature/new-api         │   ✔   │ 7f8a91c  │ 2 hours ago   │ Alex Chen    │
+  │  3   │ REMOTE │ origin/develop                 │  ↓4   │ c968167  │ 1 day ago     │ Sarah Jenkins│
+  │  4   │ LOCAL  │ develop                        │   ✔   │ 0a5bafc  │ 3 days ago    │ Sarah Jenkins│
+  └──────┴────────┴────────────────────────────────┴───────┴──────────┴───────────────┴──────────────┘
+
+  🚀 QUICK WORKFLOW ACTIONS
+  🌿 WORKFLOW                 🔍 INSPECT                  📊 ANALYTICS & CI         
+  git-record -c <ID>  (Checkout)  git-record -s <ID>  (Show)    git-record -X <ID>  (Stats) 
+  git-record -m <ID>  (Merge)   git-record -C <A:B> (Compare)  git-record -V       (Velocity)
+  git-record -d <ID>  (Delete)  git-record -M <ID>  (Conflicts)  git-record -G       (Graph) 
+  git-record -b <IDs> (Bulk Del)  git-record -k <ID>  (Copy Hash)  git-record -N <ID>  (CI Status)
+```
+
+---
+
+## 🛠️ Complete Command Reference
+
+| Flag | Long Flag | Description | Example |
+|---|---|---|---|
+| `-c <ID>` | `--checkout <ID>` | Checkout branch (auto-tracks remote branches) | `git-record -c 3` |
+| `-m <ID>` | `--merge <ID>` | Merge branch into current branch with checks | `git-record -m 2` |
+| `-d <ID>` | `--delete <ID>` | Safely delete local branch | `git-record -d 4` |
+| `-D <ID>` | `--force-delete <ID>` | Force delete local branch | `git-record -D 4` |
+| `-b <IDs>` | `--bulk-delete <IDs>` | Bulk delete multiple branches | `git-record -b 2,4,5` |
+| `-R <ID>` | `--rename <ID> [name]` | Rename local branch safely | `git-record -R 1 new-name` |
+| `-k <ID>` | `--copy <ID>` | Copy commit hash to clipboard (Wayland/X11/macOS/Windows) | `git-record -k 1` |
+| `-s <ID>` | `--show <ID>` | Show commit details and diffstat | `git-record -s 2` |
+| `-X <ID>` | `--stats <ID>` | Deep branch metrics (churn, files, authors) | `git-record -X 3` |
+| `-C <A:B>` | `--compare <A:B>` | Two-way branch comparison | `git-record -C 1:3` |
+| `-M <ID>` | `--conflicts <ID>` | Predict merge conflicts before merging | `git-record -M 2` |
+| `-V [days]` | `--velocity [days]` | Team commit velocity dashboard | `git-record -V 30` |
+| `-G` | `--graph` | Branch divergence & topology graph | `git-record -G` |
+| `-A` | `--cleanup` | Smart cleanup auditor for merged & stale branches | `git-record -A` |
+| `-T [N]` | `--tags [N]` | List repository tags and releases | `git-record -T 10` |
+| `-L` | `--stash` | View stashed changes stack | `git-record -L` |
+| `-H [N]` | `--history [N]` | Formatted direct commit history log | `git-record -H 20` |
+| `-S <code\>` | `--search <code>` | Search code content across all branches | `git-record -S "func"` |
+| `-W` | `--worktrees` | List active Git worktrees | `git-record -W` |
+| `-i` | `--interactive` | Launch interactive TUI / FZF branch selector | `git-record -i` |
+| `-N <ID>` | `--ci <ID>` | Inspect GitHub / GitLab CI/CD pipeline | `git-record -N 1` |
+| `--watch-ci <ID>` | `--watch-ci <ID> [sec]` | Real-time live CI/CD monitoring dashboard | `git-record --watch-ci 1 5` |
+| `--sys-info` | `--doctor`, `--info` | Environment & platform diagnostics | `git-record --sys-info` |
+| `--no-color` | `--no-color` | Disable colored terminal output | `git-record --no-color` |
+| `-v` | `--version` | Display version and platform information | `git-record -v` |
+| `-h` | `--help` | Display manual and help text | `git-record -h` |
+
+---
+
+## ❌ Professional Error Handling
+
+Clear, formatted error boxes with suggested hints and copy-pasteable examples:
 
 ```text
-/usr/local/bin/git-record
+  ┌─ ERROR ───────────────────────────────────────────────┐
+  │ Message : Branch ID out of range: 999                 │
+  │ Hint    : Select an ID between 1 and 10               │
+  │ Example : git-record -c 1                             │
+  └───────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 🚀 Usage
+## 🔒 Configuration (`~/.gitrecordrc`)
 
-### Default (shows latest 10)
+You can customize default settings globally in `~/.gitrecordrc` or per-repository in `.gitrecord`:
 
 ```bash
-git-record
+# ~/.gitrecordrc
+DEFAULT_LIMIT=15          # Default number of branches to show
+STALE_DAYS=60             # Highlight branches older than 60 days
+CLEANUP_THRESHOLD=45      # Flag branches inactive for >45 days
+COLOR_MODE="auto"         # auto | always | never
+USE_UNICODE=1             # 1 for Unicode borders, 0 for ASCII
 ```
 
 ---
 
-### Show latest N records
+## 📄 License & Notes
 
-```bash
-git-record 5
-git-record 20
-git-record 100
-```
-
----
-
-### As a Git subcommand
-
-Because the script name starts with `git-`, you can also run:
-
-```bash
-git record
-```
-
----
-
-## 📊 Output Example
-
-```text
-Git Record
-Repository : /home/user/project
---------------------------------
-Current Branch : feature/new-api
-Local Records  : 4
-Remote Records : 28
-Total Records  : 32
-Showing Latest : 10
-
-+----+--------+-----------------+------------------------------------------+
-| No | TYPE   | LAST COMMIT     | BRANCH                                   |
-+----+--------+-----------------+------------------------------------------+
-| 1  | LOCAL  | 2 hours ago     | feature/new-api                          |
-| 2  | REMOTE | 2 hours ago     | origin/feature/new-api                   |
-| 3  | REMOTE | 1 day ago       | origin/develop                           |
-| 4  | LOCAL  | 3 days ago      | develop                                  |
-+----+--------+-----------------+------------------------------------------+
-```
-
----
-
-## ❌ Error Handling (Professional & Clear)
-
-### Invalid argument
-
-```bash
-git-record clear
-```
-
-```text
-┌─ ERROR ───────────────────────────────────────────────┐
-│ Message : Invalid argument                            │
-│ Hint    : Please provide a positive number            │
-│ Example : git-record 10                               │
-└───────────────────────────────────────────────────────┘
-```
-
----
-
-### Zero or negative value
-
-```bash
-git-record 0
-```
-
-```text
-┌─ ERROR ───────────────────────────────────────────────┐
-│ Message : Invalid limit value                         │
-│ Hint    : Limit must be greater than zero             │
-│ Example : git-record 5                                │
-└───────────────────────────────────────────────────────┘
-```
-
----
-
-### Very large / unsafe number
-
-```bash
-git-record 999999999999999
-```
-
-```text
-┌─ ERROR ───────────────────────────────────────────────┐
-│ Message : Limit value is too large                    │
-│ Hint    : Please provide a reasonable number          │
-│ Example : git-record 100                              │
-└───────────────────────────────────────────────────────┘
-```
-
----
-
-### Not inside a Git repository
-
-```bash
-git-record
-```
-
-```text
-┌─ ERROR ───────────────────────────────────────────────┐
-│ Message : Not a Git repository                        │
-│ Hint    : Run this command inside a Git project       │
-└───────────────────────────────────────────────────────┘
-```
-
----
-
-## 🔒 Validation Rules
-
-The input number must:
-
-* Be numeric only (`^[0-9]+$`)
-* Be greater than zero
-* Have no leading zeros
-* Be within a safe length (prevents shell overflow)
-
-Anything else → **error and stop**.
-
----
-
-## 🧹 Uninstall
-
-To remove the command:
-
-```bash
-sudo rm /usr/local/bin/git-record
-```
-
----
-
-## 🧠 Notes
-
-* Works on Linux and macOS
-* No external dependencies
-* Uses native Git commands only
-* Safe for large repositories
-* Designed for daily developer use
+- **License**: MIT
+- **Platforms**: Ubuntu / Debian / Fedora / Arch Linux, macOS (Apple Silicon & Intel), Windows (Git Bash / MSYS2 / WSL).
+- **Dependencies**: Native Bash & Git (Optional: `fzf` for fuzzy selector, `jq` for API CI parsing, `gh`/`glab` for native CI inspection, `wl-copy`/`xclip`/`pbcopy`/`clip.exe` for clipboard).

@@ -1,146 +1,671 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# ==============================================================================
+#  📘 GIT-RECORD (Git Reports & Workflow Suite) v2.0.0
+#  A modern, ultra-fast, safe, and beautiful Git branch manager & report suite.
+# ==============================================================================
 
-# =========================================================
-#  🎨 THEME & CONFIGURATION
-# =========================================================
-DEFAULT_LIMIT=10
-STALE_DAYS=90 
-CLEANUP_THRESHOLD=60
-VELOCITY_DAYS=30
-MAX_INTERVAL=1000
-
-C_RESET=$'\e[0m'
-C_BOLD=$'\e[1m'
-C_DIM=$'\e[2m'
-C_RED=$'\e[31m'
-C_GREEN=$'\e[32m'
-C_YELLOW=$'\e[33m'
-C_BLUE=$'\e[34m'
-C_CYAN=$'\e[36m'
-C_MAGENTA=$'\e[35m'
-C_WHITE=$'\e[37m'
-
-C_REPO=$'\033[38;5;39m'       
-C_CURRENT=$'\033[38;5;46m'    
-C_REMOTE=$'\033[38;5;244m'    
-C_REMOTE_TXT=$'\033[38;5;39m' 
-C_LOCAL=$'\033[38;5;255m'     
-C_AUTHOR=$'\033[38;5;208m'    
-C_TIME=$'\033[38;5;33m'       
-C_WARN=$'\033[38;5;196m'      
-C_BORDER=$'\033[38;5;237m'    
-C_HEADER=$'\033[38;5;250m'    
-
-ICON_REPO="📦"
-ICON_BRANCH="🌿"
-ICON_ARROW="➜"
-ICON_STALE="⚠"
-ICON_TIP="💡"
-ICON_TEAM="👥"
-ICON_LOG="📜"
-ICON_SEARCH="🔍"
-ICON_AHEAD="↑"
-ICON_BEHIND="↓"
-ICON_TAG="🏷️"
-ICON_STASH="📦"
-ICON_STATS="📊"
-ICON_CLEANUP="🧹"
-ICON_GRAPH="📈"
-ICON_CONFLICT="⚔️"
-ICON_CI="🔧"
-ICON_GITHUB="🐙"
-ICON_GITLAB="🦊"
-
+# Exit on unexpected pipeline failures, but allow controlled error handling
 set -o pipefail
 
-# =========================================================
-#  🛠 UTILITIES
-# =========================================================
+VERSION="2.0.0"
 
-print_error() { echo -e "${C_RED}✖  $1${C_RESET}"; exit 1; }
-print_succ()  { echo -e "${C_GREEN}✔  $1${C_RESET}"; }
-print_warn()  { echo -e "${C_YELLOW}⚠  $1${C_RESET}"; }
-print_info()  { echo -e "${C_CYAN}ℹ  $1${C_RESET}"; }
+# ------------------------------------------------------------------------------
+# ⚙️  DEFAULT CONFIGURATION & ENVIRONMENT OVERRIDES
+# ------------------------------------------------------------------------------
+DEFAULT_LIMIT=10
+STALE_DAYS=90
+CLEANUP_THRESHOLD=60
+VELOCITY_DAYS=30
+MAX_INTERVAL=3600
+MIN_INTERVAL=1
+DEFAULT_REFRESH_INTERVAL=5
+USE_UNICODE=1
+COLOR_MODE="auto" # auto | always | never
 
-visible_len() {
-  local clean=$(echo -e "$1" | sed "s/\x1B\[[0-9;]*[a-zA-Z]//g")
-  echo ${#clean}
+# Load user configuration if present
+if [ -f "$HOME/.gitrecordrc" ]; then
+    # shellcheck source=/dev/null
+    source "$HOME/.gitrecordrc" 2>/dev/null || true
+fi
+if [ -f ".gitrecord" ]; then
+    # shellcheck source=/dev/null
+    source ".gitrecord" 2>/dev/null || true
+fi
+
+# ------------------------------------------------------------------------------
+# 🎨 COLOR PALETTE & TERMINAL CAPABILITIES
+# ------------------------------------------------------------------------------
+setup_colors() {
+    # Check NO_COLOR env var (https://no-color.org/)
+    if [ -n "$NO_COLOR" ] || [ "$COLOR_MODE" = "never" ] || { [ "$COLOR_MODE" = "auto" ] && [ ! -t 1 ]; }; then
+        C_RESET=""
+        C_BOLD=""
+        C_DIM=""
+        C_UNDERLINE=""
+        C_RED=""
+        C_GREEN=""
+        C_YELLOW=""
+        C_BLUE=""
+        C_MAGENTA=""
+        C_CYAN=""
+        C_WHITE=""
+        C_GRAY=""
+        C_REPO=""
+        C_CURRENT=""
+        C_REMOTE=""
+        C_REMOTE_TXT=""
+        C_LOCAL=""
+        C_AUTHOR=""
+        C_TIME=""
+        C_WARN=""
+        C_BORDER=""
+        C_HEADER=""
+        C_BG_DARK=""
+        C_SUCCESS=""
+        C_MUTED=""
+        return
+    fi
+
+    # ANSI Colors
+    C_RESET=$'\033[0m'
+    C_BOLD=$'\033[1m'
+    C_DIM=$'\033[2m'
+    C_UNDERLINE=$'\033[4m'
+
+    # Standard colors
+    C_RED=$'\033[38;5;196m'
+    C_GREEN=$'\033[38;5;46m'
+    C_YELLOW=$'\033[38;5;220m'
+    C_BLUE=$'\033[38;5;39m'
+    C_MAGENTA=$'\033[38;5;207m'
+    C_CYAN=$'\033[38;5;45m'
+    C_WHITE=$'\033[38;5;255m'
+    C_GRAY=$'\033[38;5;244m'
+
+    # Themed semantic colors
+    C_REPO=$'\033[38;5;39m'
+    C_CURRENT=$'\033[38;5;82m'
+    C_REMOTE=$'\033[38;5;245m'
+    C_REMOTE_TXT=$'\033[38;5;75m'
+    C_LOCAL=$'\033[38;5;254m'
+    C_AUTHOR=$'\033[38;5;215m'
+    C_TIME=$'\033[38;5;117m'
+    C_WARN=$'\033[38;5;208m'
+    C_BORDER=$'\033[38;5;240m'
+    C_HEADER=$'\033[38;5;251m'
+    C_BG_DARK=$'\033[48;5;236m'
+    C_SUCCESS=$'\033[38;5;48m'
+    C_MUTED=$'\033[38;5;242m'
 }
 
-repeat() {
-  if [ "$2" -gt 0 ]; then printf "%0.s$1" $(seq 1 "$2"); fi
+setup_icons() {
+    # Check if terminal supports UTF-8
+    if [ "$USE_UNICODE" -eq 1 ] && [[ "${LC_ALL:-${LC_CTYPE:-$LANG}}" =~ [uU][tT][fF]-?8 ]]; then
+        ICON_REPO="📦"
+        ICON_BRANCH="🌿"
+        ICON_CURRENT="➜"
+        ICON_STALE="⚠"
+        ICON_TIP="💡"
+        ICON_TEAM="👥"
+        ICON_LOG="📜"
+        ICON_SEARCH="🔍"
+        ICON_AHEAD="↑"
+        ICON_BEHIND="↓"
+        ICON_TAG="🏷️"
+        ICON_STASH="📥"
+        ICON_STATS="📊"
+        ICON_CLEANUP="🧹"
+        ICON_GRAPH="📈"
+        ICON_CONFLICT="⚔️"
+        ICON_CI="🔧"
+        ICON_GITHUB="🐙"
+        ICON_GITLAB="🦊"
+        ICON_CHECK="✔"
+        ICON_CROSS="✖"
+        ICON_WARN_TRI="⚠"
+        ICON_DOT="●"
+        ICON_CIRCLE="○"
+        ICON_SYNC="🔄"
+        ICON_LOCK="🔒"
+        ICON_DIRTY="⚡"
+        ICON_CLEAN="✨"
+        ICON_WORKTREE="🌲"
+        ICON_CLOCK="⏱"
+        ICON_ROCKET="🚀"
+        
+        # Box drawing characters
+        BOX_TL="┌"
+        BOX_TR="┐"
+        BOX_BL="└"
+        BOX_BR="┘"
+        BOX_H="─"
+        BOX_V="│"
+        BOX_TJ="┬"
+        BOX_BJ="┴"
+        BOX_LJ="├"
+        BOX_RJ="┤"
+        BOX_X="┼"
+        BOX_ROUND_TL="╭"
+        BOX_ROUND_TR="╮"
+        BOX_ROUND_BL="╰"
+        BOX_ROUND_BR="╯"
+    else
+        ICON_REPO="[REPO]"
+        ICON_BRANCH="*"
+        ICON_CURRENT="=>"
+        ICON_STALE="!"
+        ICON_TIP="i"
+        ICON_TEAM="[TEAM]"
+        ICON_LOG="[LOG]"
+        ICON_SEARCH="[FIND]"
+        ICON_AHEAD="^"
+        ICON_BEHIND="v"
+        ICON_TAG="[TAG]"
+        ICON_STASH="[STASH]"
+        ICON_STATS="[STATS]"
+        ICON_CLEANUP="[CLEAN]"
+        ICON_GRAPH="[GRAPH]"
+        ICON_CONFLICT="[CONFLICT]"
+        ICON_CI="[CI]"
+        ICON_GITHUB="[GH]"
+        ICON_GITLAB="[GL]"
+        ICON_CHECK="v"
+        ICON_CROSS="x"
+        ICON_WARN_TRI="!"
+        ICON_DOT="*"
+        ICON_CIRCLE="o"
+        ICON_SYNC="~"
+        ICON_LOCK="[L]"
+        ICON_DIRTY="*"
+        ICON_CLEAN="="
+        ICON_WORKTREE="[WT]"
+        ICON_CLOCK="T:"
+        ICON_ROCKET=">>"
+
+        # ASCII Box characters
+        BOX_TL="+"
+        BOX_TR="+"
+        BOX_BL="+"
+        BOX_BR="+"
+        BOX_H="-"
+        BOX_V="|"
+        BOX_TJ="+"
+        BOX_BJ="+"
+        BOX_LJ="+"
+        BOX_RJ="+"
+        BOX_X="+"
+        BOX_ROUND_TL="+"
+        BOX_ROUND_TR="+"
+        BOX_ROUND_BL="+"
+        BOX_ROUND_BR="+"
+    fi
 }
 
+setup_colors
+setup_icons
+
+# ------------------------------------------------------------------------------
+# 🛠️  FAST STRING & UI UTILITIES (Pure Bash - No Subshell Overhead)
+# ------------------------------------------------------------------------------
+
+# Strip ANSI codes for accurate width calculation
+strip_ansi() {
+    local text="$1"
+    echo -e "$text" | sed -E $'s/\033\\[[0-9;]*[a-zA-Z]//g'
+}
+
+# Calculate visible length of text ignoring ANSI escape sequences
+str_len() {
+    local raw="$1"
+    local clean
+    clean=$(strip_ansi "$raw")
+    echo "${#clean}"
+}
+
+# Repeat a character N times without seq/subshell loops
+repeat_char() {
+    local char="${1:-" "}"
+    local count="${2:-0}"
+    if [ "$count" -le 0 ]; then
+        return
+    fi
+    local result=""
+    while [ "${#result}" -lt "$count" ]; do
+        result="${result}${char}"
+    done
+    printf "%s" "${result:0:$count}"
+}
+
+# Truncate string to max length with ellipsis if needed
+truncate_str() {
+    local str="$1"
+    local max_len="$2"
+    local raw_len
+    raw_len=$(str_len "$str")
+    if [ "$raw_len" -le "$max_len" ]; then
+        echo "$str"
+    else
+        if [ "$max_len" -le 3 ]; then
+            echo "${str:0:$max_len}"
+        else
+            local cut_len=$((max_len - 3))
+            echo "${str:0:$cut_len}..."
+        fi
+    fi
+}
+
+# Print cell with exact padding and color
 print_cell() {
-  local txt="$1"; local w="$2"; local col="$3"
-  local vlen=$(visible_len "$txt")
-  local pad=$((w - vlen))
-  [ "$pad" -lt 0 ] && pad=0
-  printf "%b%s%b" "$col" "$txt" "${C_RESET}"
-  repeat " " "$pad"
+    local txt="$1"
+    local width="$2"
+    local color="${3:-$C_RESET}"
+    local align="${4:-left}" # left | right | center
+
+    local vlen
+    vlen=$(str_len "$txt")
+    local pad=$((width - vlen))
+    [ "$pad" -lt 0 ] && pad=0
+
+    if [ "$align" = "right" ]; then
+        repeat_char " " "$pad"
+        printf "%b%s%b" "$color" "$txt" "${C_RESET}"
+    elif [ "$align" = "center" ]; then
+        local pad_left=$((pad / 2))
+        local pad_right=$((pad - pad_left))
+        repeat_char " " "$pad_left"
+        printf "%b%s%b" "$color" "$txt" "${C_RESET}"
+        repeat_char " " "$pad_right"
+    else
+        printf "%b%s%b" "$color" "$txt" "${C_RESET}"
+        repeat_char " " "$pad"
+    fi
 }
 
-copy_to_clipboard() {
-  if command -v pbcopy >/dev/null 2>&1; then 
-    echo -n "$1" | pbcopy
-  elif command -v xclip >/dev/null 2>&1; then 
-    echo -n "$1" | xclip -selection clipboard
-  elif command -v xsel >/dev/null 2>&1; then 
-    echo -n "$1" | xsel --clipboard
-  else
-    echo -e "${C_DIM}Hash: ${C_BOLD}$1${C_RESET}"
-    return 1
-  fi
-}
-
+# Draw horizontal visual progress bar
 draw_bar() {
-    local value=$1
-    local max=$2
-    local width=${3:-20}
-    local char=${4:-"█"}
-    local color=${5:-$C_GREEN}
-    
-    [ "$max" -eq 0 ] && max=1
-    local filled=$((value * width / max))
+    local val="${1:-0}"
+    local max="${2:-100}"
+    local width="${3:-20}"
+    local color="${4:-$C_GREEN}"
+    local char="${5:-"█"}"
+
+    [ "$max" -le 0 ] && max=1
+    local filled=$(( val * width / max ))
     [ "$filled" -gt "$width" ] && filled=$width
+    [ "$filled" -lt 0 ] && filled=0
+    local empty=$(( width - filled ))
+
+    printf "%b" "$color"
+    repeat_char "$char" "$filled"
+    printf "%b" "$C_MUTED"
+    repeat_char "░" "$empty"
+    printf "%b" "$C_RESET"
+}
+
+# ------------------------------------------------------------------------------
+# 📦 PROFESSIONAL BOXED MESSAGE & ERROR SYSTEM
+# ------------------------------------------------------------------------------
+
+render_error_box() {
+    local message="$1"
+    local hint="$2"
+    local example="$3"
+
+    local max_len=${#message}
+    [ -n "$hint" ] && [ "${#hint}" -gt "$max_len" ] && max_len=${#hint}
+    [ -n "$example" ] && [ "${#example}" -gt "$max_len" ] && max_len=${#example}
+
+    # Inner content width: max_len + label prefix (" Message : ")
+    local inner_width=$((max_len + 13))
+    [ "$inner_width" -lt 55 ] && inner_width=55
+
+    echo
+    printf "  %b%s%s" "$C_RED" "$BOX_TL$BOX_H" " ERROR "
+    local top_bar_len=$((inner_width - 8))
+    repeat_char "$BOX_H" "$top_bar_len"
+    printf "%s%b\n" "$BOX_TR" "$C_RESET"
+
+    # Message
+    local l1=" Message : $message"
+    local p1=$((inner_width - ${#l1}))
+    [ "$p1" -lt 0 ] && p1=0
+    printf "  %b%s%b%s" "$C_RED$BOX_V" "$C_RESET" "$l1"
+    repeat_char " " "$p1"
+    printf "%b%s%b\n" "$C_RED" "$BOX_V" "$C_RESET"
+
+    # Hint
+    if [ -n "$hint" ]; then
+        local l2=" Hint    : $hint"
+        local p2=$((inner_width - ${#l2}))
+        [ "$p2" -lt 0 ] && p2=0
+        printf "  %b%s%b%s" "$C_RED$BOX_V" "$C_DIM" "$l2"
+        repeat_char " " "$p2"
+        printf "%b%s%b\n" "$C_RED" "$BOX_V" "$C_RESET"
+    fi
+
+    # Example
+    if [ -n "$example" ]; then
+        local l3=" Example : $example"
+        local p3=$((inner_width - ${#l3}))
+        [ "$p3" -lt 0 ] && p3=0
+        printf "  %b%s%b%s" "$C_RED$BOX_V" "$C_YELLOW" "$l3"
+        repeat_char " " "$p3"
+        printf "%b%s%b\n" "$C_RED" "$BOX_V" "$C_RESET"
+    fi
+
+    # Bottom
+    printf "  %b%s" "$C_RED" "$BOX_BL"
+    repeat_char "$BOX_H" "$inner_width"
+    printf "%s%b\n\n" "$BOX_BR" "$C_RESET"
+
+    exit 1
+}
+
+print_success() {
+    echo -e "  ${C_SUCCESS}${ICON_CHECK}  $1${C_RESET}"
+}
+
+print_warn() {
+    echo -e "  ${C_WARN}${ICON_WARN_TRI}  $1${C_RESET}"
+}
+
+print_info() {
+    echo -e "  ${C_CYAN}${ICON_TIP}  $1${C_RESET}"
+}
+
+# ------------------------------------------------------------------------------
+# 💻 CROSS-PLATFORM SYSTEM & OS DISCOVERY (Ubuntu, macOS, Windows)
+# ------------------------------------------------------------------------------
+
+detect_os_environment() {
+    OS_ARCH="$(uname -m 2>/dev/null || echo "unknown")"
+    local u_sys
+    u_sys="$(uname -s 2>/dev/null | tr '[:upper:]' '[:lower:]')"
+
+    if [[ "$u_sys" == "darwin"* ]]; then
+        OS_TYPE="macos"
+        local mac_ver mac_build
+        mac_ver=$(sw_vers -productVersion 2>/dev/null || echo "")
+        mac_build=$(sw_vers -buildVersion 2>/dev/null || echo "")
+        if [ -n "$mac_ver" ]; then
+            OS_NAME="macOS $mac_ver ($mac_build)"
+        else
+            OS_NAME="macOS (Darwin $(uname -r 2>/dev/null))"
+        fi
+    elif [[ "$u_sys" == "linux"* ]]; then
+        if grep -qi "microsoft" /proc/version 2>/dev/null || grep -qi "wsl" /proc/version 2>/dev/null; then
+            OS_TYPE="windows_wsl"
+            local distro="Linux"
+            if [ -f /etc/os-release ]; then
+                # shellcheck source=/dev/null
+                distro=$(source /etc/os-release 2>/dev/null && echo "$PRETTY_NAME" || echo "Linux")
+            fi
+            OS_NAME="Windows WSL ($distro)"
+        else
+            OS_TYPE="linux"
+            if [ -f /etc/os-release ]; then
+                # shellcheck source=/dev/null
+                OS_NAME=$(source /etc/os-release 2>/dev/null && echo "$PRETTY_NAME" || echo "Linux")
+            elif command -v lsb_release >/dev/null 2>&1; then
+                OS_NAME=$(lsb_release -ds 2>/dev/null || echo "Linux")
+            else
+                OS_NAME="Linux $(uname -r 2>/dev/null)"
+            fi
+        fi
+    elif [[ "$u_sys" =~ (msys|mingw|cygwin) ]] || [ -n "$WINDIR" ] || [ -n "$COMSPEC" ]; then
+        OS_TYPE="windows"
+        local win_ver=""
+        if command -v cmd.exe >/dev/null 2>&1; then
+            win_ver=$(cmd.exe /c "ver" 2>/dev/null | tr -d '\r\n' | sed 's/^[[:space:]]*//')
+        fi
+        [ -z "$win_ver" ] && win_ver="Windows (Git Bash/MinGW)"
+        OS_NAME="$win_ver"
+    else
+        OS_TYPE="unix"
+        OS_NAME="$(uname -s 2>/dev/null || echo "Unix") $(uname -r 2>/dev/null || echo "")"
+    fi
+}
+
+get_past_date() {
+    local days="${1:-30}"
+    local fmt="${2:-"%Y-%m-%d"}"
+
+    # 1. Try GNU date (Ubuntu, Linux, Git Bash)
+    local gnu_res
+    gnu_res=$(date -d "$days days ago" "+$fmt" 2>/dev/null)
+    if [ -n "$gnu_res" ]; then
+        echo "$gnu_res"
+        return
+    fi
+
+    # 2. Try BSD date (macOS, FreeBSD)
+    local bsd_res
+    bsd_res=$(date -v-"${days}"d "+$fmt" 2>/dev/null)
+    if [ -n "$bsd_res" ]; then
+        echo "$bsd_res"
+        return
+    fi
+
+    # 3. Epoch fallback arithmetic
+    local now_epoch target_epoch
+    now_epoch=$(date +%s 2>/dev/null || echo 0)
+    target_epoch=$(( now_epoch - (days * 86400) ))
     
-    echo -n "${color}"
-    repeat "$char" "$filled"
-    echo -n "${C_DIM}"
-    repeat "░" $((width - filled))
-    echo -n "${C_RESET}"
+    local epoch_res
+    epoch_res=$(date -d "@$target_epoch" "+$fmt" 2>/dev/null || date -r "$target_epoch" "+$fmt" 2>/dev/null)
+    if [ -n "$epoch_res" ]; then
+        echo "$epoch_res"
+        return
+    fi
+
+    echo "$days days ago"
 }
 
-# =========================================================
-#  🌐 API INTEGRATION
-# =========================================================
-
-get_github_token() {
-    if [ -n "$GITHUB_TOKEN" ]; then
-        echo "$GITHUB_TOKEN"
-    elif [ -n "$GH_TOKEN" ]; then
-        echo "$GH_TOKEN"
+get_clipboard_tool_name() {
+    if [ -n "$WAYLAND_DISPLAY" ] && command -v wl-copy >/dev/null 2>&1; then
+        echo "wl-copy (Wayland)"
+    elif command -v pbcopy >/dev/null 2>&1; then
+        echo "pbcopy (macOS)"
+    elif command -v xclip >/dev/null 2>&1; then
+        echo "xclip (X11)"
+    elif command -v xsel >/dev/null 2>&1; then
+        echo "xsel (X11)"
+    elif command -v clip.exe >/dev/null 2>&1; then
+        echo "clip.exe (Windows)"
+    elif command -v powershell.exe >/dev/null 2>&1; then
+        echo "PowerShell Set-Clipboard (Windows)"
+    elif [ -t 1 ]; then
+        echo "OSC 52 (ANSI Terminal Escape)"
     else
-        git config --global github.token 2>/dev/null
+        echo "none (console fallback)"
     fi
 }
 
-get_gitlab_token() {
-    if [ -n "$GITLAB_TOKEN" ]; then
-        echo "$GITLAB_TOKEN"
-    else
-        git config --global gitlab.token 2>/dev/null
+action_sys_info() {
+    detect_os_environment
+    local clip_tool
+    clip_tool=$(get_clipboard_tool_name)
+    local git_ver
+    git_ver=$(git --version 2>/dev/null || echo "not found")
+    local bash_ver
+    bash_ver="${BASH_VERSION:-unknown}"
+    local cols_detected
+    cols_detected=$(tput cols 2>/dev/null || echo "100")
+    local term_info="${TERM:-dumb} (${cols_detected} cols)"
+
+    local fzf_stat="Not installed (using built-in menu)"
+    command -v fzf >/dev/null 2>&1 && fzf_stat="Available (interactive fuzzy search)"
+    local jq_stat="Not installed"
+    command -v jq >/dev/null 2>&1 && jq_stat="Available (REST API JSON parser)"
+    local gh_stat="Not installed"
+    command -v gh >/dev/null 2>&1 && gh_stat="Available (GitHub CLI integration)"
+    local glab_stat="Not installed"
+    command -v glab >/dev/null 2>&1 && glab_stat="Available (GitLab CLI integration)"
+
+    local box_width=68
+
+    echo
+    printf "  %b%s%s" "$C_CYAN" "$BOX_TL$BOX_H" " SYSTEM & PLATFORM DIAGNOSTICS "
+    repeat_char "$BOX_H" $((box_width - 34))
+    printf "%s%b\n" "$BOX_TR" "$C_RESET"
+
+    print_diag_line() {
+        local label="$1"
+        local val="$2"
+        local color="${3:-"$C_WHITE"}"
+        local label_padded
+        label_padded=$(printf "%-22s" "$label")
+        local content_str="  ${label_padded} : ${val}"
+        local raw_len=${#content_str}
+        local pad=$((box_width - raw_len))
+        [ "$pad" -lt 0 ] && pad=0
+
+        printf "  %b%s%b  %-22s : %b%s%b" "$C_CYAN" "$BOX_V" "$C_RESET" "$label" "$color" "$val" "$C_RESET"
+        repeat_char " " "$pad"
+        printf "%b%s%b\n" "$C_CYAN" "$BOX_V" "$C_RESET"
+    }
+
+    print_diag_line "Operating System" "$OS_NAME" "$C_BOLD$C_WHITE"
+    print_diag_line "Platform / Arch" "$OS_TYPE ($OS_ARCH)" "$C_CYAN"
+    print_diag_line "Shell Version" "Bash $bash_ver" "$C_RESET"
+    print_diag_line "Git Binary" "$git_ver" "$C_RESET"
+    print_diag_line "Terminal Environment" "$term_info" "$C_RESET"
+    print_diag_line "Clipboard Engine" "$clip_tool" "$C_GREEN"
+    print_diag_line "FZF Fuzzy Engine" "$fzf_stat" "$([ "$fzf_stat" != "Not installed (using built-in menu)" ] && echo "$C_GREEN" || echo "$C_DIM")"
+    print_diag_line "JSON Parser (jq)" "$jq_stat" "$([ "$jq_stat" != "Not installed" ] && echo "$C_GREEN" || echo "$C_DIM")"
+    print_diag_line "GitHub CLI (gh)" "$gh_stat" "$([ "$gh_stat" != "Not installed" ] && echo "$C_GREEN" || echo "$C_DIM")"
+    print_diag_line "GitLab CLI (glab)" "$glab_stat" "$([ "$glab_stat" != "Not installed" ] && echo "$C_GREEN" || echo "$C_DIM")"
+
+    printf "  %b%s" "$C_CYAN" "$BOX_BL"
+    repeat_char "$BOX_H" "$box_width"
+    printf "%s%b\n\n" "$BOX_BR" "$C_RESET"
+}
+
+# ------------------------------------------------------------------------------
+# 📋 SYSTEM CLIPBOARD COPYING (Multi-Platform with OSC 52 Fallback)
+# ------------------------------------------------------------------------------
+copy_to_clipboard() {
+    local text="$1"
+
+    # Wayland (Ubuntu / Linux)
+    if [ -n "$WAYLAND_DISPLAY" ] && command -v wl-copy >/dev/null 2>&1; then
+        printf "%s" "$text" | wl-copy
+        return 0
+    fi
+
+    # macOS (Darwin)
+    if command -v pbcopy >/dev/null 2>&1; then
+        printf "%s" "$text" | pbcopy
+        return 0
+    fi
+
+    # X11 xclip (Ubuntu / Debian / Linux)
+    if command -v xclip >/dev/null 2>&1; then
+        printf "%s" "$text" | xclip -selection clipboard 2>/dev/null
+        return 0
+    fi
+
+    # X11 xsel (Ubuntu / Linux)
+    if command -v xsel >/dev/null 2>&1; then
+        printf "%s" "$text" | xsel --clipboard --input 2>/dev/null
+        return 0
+    fi
+
+    # Windows clip.exe (Git Bash / MSYS2 / WSL)
+    if command -v clip.exe >/dev/null 2>&1; then
+        printf "%s" "$text" | clip.exe 2>/dev/null
+        return 0
+    fi
+
+    # Windows PowerShell fallback
+    if command -v powershell.exe >/dev/null 2>&1; then
+        printf "%s" "$text" | powershell.exe -NoProfile -NonInteractive -Command "\$Input | Set-Clipboard" 2>/dev/null
+        return 0
+    fi
+
+    # OSC 52 terminal copy fallback (works over SSH and in modern terminals on Windows/Mac/Linux)
+    if [ -t 1 ]; then
+        local b64
+        b64=$(printf "%s" "$text" | base64 2>/dev/null | tr -d '\r\n')
+        if [ -n "$b64" ]; then
+            printf "\033]52;c;%s\007" "$b64"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+# ------------------------------------------------------------------------------
+# 🔍 REPOSITORY & GIT ENVIRONMENT DISCOVERY
+# ------------------------------------------------------------------------------
+check_git_repo() {
+    if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        render_error_box "Not a Git repository" "Run this command inside an active Git project" "cd /path/to/project && git-record"
     fi
 }
+
+detect_primary_branch() {
+    local base=""
+    # Check origin/HEAD symref
+    base=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+    if [ -n "$base" ]; then
+        echo "$base"
+        return
+    fi
+    # Check common branch names
+    for b in main master trunk develop; do
+        if git show-ref --verify --quiet "refs/heads/$b" || git show-ref --verify --quiet "refs/remotes/origin/$b"; then
+            echo "$b"
+            return
+        fi
+    done
+    echo "main"
+}
+
+get_repo_info() {
+    REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+    REPO_NAME=$(basename "$REPO_ROOT")
+    CUR_BRANCH=$(git branch --show-current 2>/dev/null)
+    
+    # Handle detached HEAD or rebasing state
+    if [ -z "$CUR_BRANCH" ]; then
+        local head_commit
+        head_commit=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+        CUR_BRANCH="(detached at $head_commit)"
+    fi
+
+    # Working tree status
+    local dirty_count
+    dirty_count=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$dirty_count" -gt 0 ]; then
+        IS_DIRTY=1
+        STATUS_BADGE="${C_YELLOW}${ICON_DIRTY} $dirty_count modified${C_RESET}"
+    else
+        IS_DIRTY=0
+        STATUS_BADGE="${C_GREEN}${ICON_CLEAN} clean${C_RESET}"
+    fi
+
+    # Stash count
+    STASH_COUNT=$(git stash list 2>/dev/null | wc -l | tr -d ' ')
+
+    # Local & remote branch counts
+    COUNT_LOCAL=$(git for-each-ref --format='%(refname)' refs/heads 2>/dev/null | wc -l | tr -d ' ')
+    COUNT_REMOTE=$(git for-each-ref --format='%(refname)' refs/remotes 2>/dev/null | grep -v "/HEAD$" | wc -l | tr -d ' ')
+    PRIMARY_BRANCH=$(detect_primary_branch)
+}
+
+# ------------------------------------------------------------------------------
+# 🌐 REMOTE PLATFORM & CI/CD HELPERS (GitHub / GitLab / CLI Native)
+# ------------------------------------------------------------------------------
 
 detect_remote_platform() {
-    local remote_url=$(git config --get remote.origin.url 2>/dev/null)
+    local remote_url
+    remote_url=$(git config --get remote.origin.url 2>/dev/null)
     [ -z "$remote_url" ] && return 1
-    
-    # Check for GitHub (github.com or self-hosted with 'github' in domain)
+
     if [[ "$remote_url" =~ github\.com ]] || [[ "$remote_url" =~ github ]]; then
         echo "github"
-    # Check for GitLab (gitlab.com or self-hosted with 'gitlab' in domain)
     elif [[ "$remote_url" =~ gitlab ]]; then
         echo "gitlab"
     else
@@ -148,2162 +673,1540 @@ detect_remote_platform() {
     fi
 }
 
+get_github_token() {
+    if [ -n "$GITHUB_TOKEN" ]; then
+        echo "$GITHUB_TOKEN"
+    elif [ -n "$GH_TOKEN" ]; then
+        echo "$GH_TOKEN"
+    else
+        git config --global github.token 2>/dev/null || git config github.token 2>/dev/null
+    fi
+}
+
+get_gitlab_token() {
+    if [ -n "$GITLAB_TOKEN" ]; then
+        echo "$GITLAB_TOKEN"
+    elif [ -n "$GL_TOKEN" ]; then
+        echo "$GL_TOKEN"
+    else
+        git config --global gitlab.token 2>/dev/null || git config gitlab.token 2>/dev/null
+    fi
+}
+
 parse_github_repo() {
-    local url=$(git config --get remote.origin.url 2>/dev/null)
+    local url
+    url=$(git config --get remote.origin.url 2>/dev/null)
     if [[ "$url" =~ github\.com[:/]([^/]+)/([^/.]+) ]]; then
         echo "${BASH_REMATCH[1]}/${BASH_REMATCH[2]%.git}"
     fi
 }
 
 parse_gitlab_repo() {
-    local url=$(git config --get remote.origin.url 2>/dev/null)
-    # Match: gitlab.com or gitlab.anything.com or anything.gitlab.com
+    local url
+    url=$(git config --get remote.origin.url 2>/dev/null)
     if [[ "$url" =~ gitlab.*[:/]([^/]+)/([^/.]+) ]]; then
         echo "${BASH_REMATCH[1]}/${BASH_REMATCH[2]%.git}"
     elif [[ "$url" =~ [:/]([^/]+)/([^/.]+)\.git ]]; then
-        # Fallback: extract owner/repo from any gitlab URL
         echo "${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
     fi
 }
 
 get_gitlab_domain() {
-    local url=$(git config --get remote.origin.url 2>/dev/null)
+    local url
+    url=$(git config --get remote.origin.url 2>/dev/null)
     if [[ "$url" =~ ^https?://([^/]+) ]]; then
         echo "${BASH_REMATCH[1]}"
     elif [[ "$url" =~ @([^:]+): ]]; then
         echo "${BASH_REMATCH[1]}"
     else
-        echo "gitlab.com"  # fallback
+        echo "gitlab.com"
     fi
 }
 
-fetch_github_ci_status() {
-    local repo=$1
-    local branch=$2
-    local token=$(get_github_token)
-    [ -z "$token" ] && return 1
-    
-    curl -s -H "Authorization: token $token" \
-         -H "Accept: application/vnd.github.v3+json" \
-         "https://api.github.com/repos/$repo/commits/$branch/status" 2>/dev/null
-}
-
-fetch_github_workflows() {
-    local repo=$1
-    local branch=$2
-    local token=$(get_github_token)
-    [ -z "$token" ] && return 1
-    
-    # Get workflow runs for this branch
-    curl -s -H "Authorization: token $token" \
-         -H "Accept: application/vnd.github.v3+json" \
-         "https://api.github.com/repos/$repo/actions/runs?branch=$branch&per_page=1" 2>/dev/null
-}
-
-fetch_github_workflow_jobs() {
-    local repo=$1
-    local run_id=$2
-    local token=$(get_github_token)
-    [ -z "$token" ] && return 1
-    
-    curl -s -H "Authorization: token $token" \
-         -H "Accept: application/vnd.github.v3+json" \
-         "https://api.github.com/repos/$repo/actions/runs/$run_id/jobs" 2>/dev/null
-}
-
-fetch_github_commit() {
-    local repo=$1
-    local branch=$2
-    local token=$(get_github_token)
-    [ -z "$token" ] && return 1
-    
-    curl -s -H "Authorization: token $token" \
-         -H "Accept: application/vnd.github.v3+json" \
-         "https://api.github.com/repos/$repo/commits/$branch" 2>/dev/null
-}
-
-fetch_github_pulls() {
-    local repo=$1
-    local branch=$2
-    local token=$(get_github_token)
-    [ -z "$token" ] && return 1
-    
-    # URL encode the branch name
-    local encoded_branch=$(echo "$branch" | sed 's/\//%2F/g')
-    
-    curl -s -H "Authorization: token $token" \
-         -H "Accept: application/vnd.github.v3+json" \
-         "https://api.github.com/repos/$repo/pulls?head=$branch&state=open" 2>/dev/null
-}
-
-fetch_gitlab_ci_status() {
-    local repo=$1
-    local branch=$2
-    local token=$(get_gitlab_token)
-    [ -z "$token" ] && return 1
-    
-    local gitlab_domain=$(get_gitlab_domain)
-    local project_path=$(echo "$repo" | sed 's/\//%2F/g')
-    
-    # URL encode the branch name (handle slashes and special chars)
-    local encoded_branch=$(echo "$branch" | sed 's/\//%2F/g' | sed 's/ /%20/g')
-    
-    # First, try to get the numeric project ID
-    local project_data=$(curl -s -H "PRIVATE-TOKEN: $token" \
-         "https://${gitlab_domain}/api/v4/projects/$project_path" 2>/dev/null)
-    
-    local project_id=$(echo "$project_data" | jq -r '.id' 2>/dev/null)
-    
-    # If we got a numeric ID, use that (more reliable)
-    if [ -n "$project_id" ] && [ "$project_id" != "null" ]; then
-        curl -s -H "PRIVATE-TOKEN: $token" \
-             "https://${gitlab_domain}/api/v4/projects/$project_id/repository/commits/$encoded_branch" 2>/dev/null
-    else
-        # Fallback to project path
-        curl -s -H "PRIVATE-TOKEN: $token" \
-             "https://${gitlab_domain}/api/v4/projects/$project_path/repository/commits/$encoded_branch" 2>/dev/null
-    fi
-}
-
-fetch_gitlab_merge_requests() {
-    local repo=$1
-    local branch=$2
-    local token=$(get_gitlab_token)
-    [ -z "$token" ] && return 1
-    
-    local gitlab_domain=$(get_gitlab_domain)
-    local project_path=$(echo "$repo" | sed 's/\//%2F/g')
-    
-    # Get project ID
-    local project_data=$(curl -s -H "PRIVATE-TOKEN: $token" \
-         "https://${gitlab_domain}/api/v4/projects/$project_path" 2>/dev/null)
-    local project_id=$(echo "$project_data" | jq -r '.id' 2>/dev/null)
-    
-    if [ -n "$project_id" ] && [ "$project_id" != "null" ]; then
-        # Get MRs for this branch (source_branch)
-        curl -s -H "PRIVATE-TOKEN: $token" \
-             "https://${gitlab_domain}/api/v4/projects/$project_id/merge_requests?source_branch=$branch&state=opened" 2>/dev/null
-    fi
-}
-
-fetch_gitlab_pipeline_details() {
-    local repo=$1
-    local pipeline_id=$2
-    local token=$(get_gitlab_token)
-    [ -z "$token" ] && return 1
-    
-    local gitlab_domain=$(get_gitlab_domain)
-    local project_path=$(echo "$repo" | sed 's/\//%2F/g')
-    
-    # Get project ID
-    local project_data=$(curl -s -H "PRIVATE-TOKEN: $token" \
-         "https://${gitlab_domain}/api/v4/projects/$project_path" 2>/dev/null)
-    local project_id=$(echo "$project_data" | jq -r '.id' 2>/dev/null)
-    
-    if [ -n "$project_id" ] && [ "$project_id" != "null" ]; then
-        # Get pipeline jobs
-        curl -s -H "PRIVATE-TOKEN: $token" \
-             "https://${gitlab_domain}/api/v4/projects/$project_id/pipelines/$pipeline_id/jobs" 2>/dev/null
-    fi
-}
-
-# =========================================================
-#  📊 ANALYTICS & STATISTICS
-# =========================================================
-
-calculate_commit_frequency() {
-    local branch=$1
-    local days=${2:-30}
-    local since=$(date -d "$days days ago" +%Y-%m-%d 2>/dev/null || date -v-${days}d +%Y-%m-%d 2>/dev/null)
-    
-    git log --since="$since" --format='%cd' --date=short "$branch" 2>/dev/null | \
-        sort | uniq -c | awk '{sum+=$1} END {print (NR>0 ? sum/NR : 0)}'
-}
-
-get_branch_metrics() {
-    local branch=$1
-    local base=${2:-"origin/main"}
-    
-    git rev-parse --verify "$base" >/dev/null 2>&1 || base="origin/master"
-    git rev-parse --verify "$base" >/dev/null 2>&1 || base="main"
-    git rev-parse --verify "$base" >/dev/null 2>&1 || base="master"
-    
-    local commits=$(git rev-list --count "$base..$branch" 2>/dev/null || echo 0)
-    local files=$(git diff --name-only "$base...$branch" 2>/dev/null | wc -l)
-    local additions=$(git diff --numstat "$base...$branch" 2>/dev/null | awk '{add+=$1} END {print add+0}')
-    local deletions=$(git diff --numstat "$base...$branch" 2>/dev/null | awk '{del+=$2} END {print del+0}')
-    local authors=$(git log --format='%an' "$base..$branch" 2>/dev/null | sort -u | wc -l)
-    
-    echo "$commits|$files|$additions|$deletions|$authors"
-}
-
-calculate_team_velocity() {
-    local days=${1:-30}
-    local since=$(date -d "$days days ago" +%Y-%m-%d 2>/dev/null || date -v-${days}d +%Y-%m-%d 2>/dev/null)
-    
-    echo -e "\n  ${C_BOLD}${ICON_GRAPH} TEAM VELOCITY (Last $days days)${C_RESET}\n"
-    
-    echo -e "  ${C_HEADER}Commits by Author:${C_RESET}"
-    git log --since="$since" --format='%an' --all 2>/dev/null | \
-        sort | uniq -c | sort -rn | head -10 | while read count author; do
-        printf "    %-25s " "$author"
-        draw_bar "$count" 100 20
-        printf " %3d\n" "$count"
-    done
-    
-    echo
-    echo -e "  ${C_HEADER}Daily Commit Activity:${C_RESET}"
-    git log --since="$since" --format='%cd' --date=short --all 2>/dev/null | \
-        sort | uniq -c | tail -14 | while read count date; do
-        printf "    %-12s " "$date"
-        draw_bar "$count" 50 20
-        printf " %3d\n" "$count"
-    done
-    
-    echo
-    echo -e "  ${C_HEADER}Overall Statistics:${C_RESET}"
-    total_commits=$(git log --since="$since" --all --oneline 2>/dev/null | wc -l)
-    total_authors=$(git log --since="$since" --format='%an' --all 2>/dev/null | sort -u | wc -l)
-    avg_per_day=$((total_commits / days))
-    
-    echo -e "    ${C_CYAN}Total Commits:${C_RESET}  $total_commits"
-    echo -e "    ${C_CYAN}Active Authors:${C_RESET} $total_authors"
-    echo -e "    ${C_CYAN}Avg/Day:${C_RESET}        $avg_per_day"
-}
-
-generate_branch_graph() {
-    echo -e "\n  ${C_BOLD}${ICON_GRAPH} BRANCH DEPENDENCY GRAPH${C_RESET}\n"
-    
-    branches=($(git for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null | head -20))
-    main_branch="main"
-    git rev-parse --verify main >/dev/null 2>&1 || main_branch="master"
-    
-    echo -e "  ${C_HEADER}Branch Relationships:${C_RESET}\n"
-    
-    for branch in "${branches[@]}"; do
-        [ "$branch" == "$main_branch" ] && continue
-        
-        ahead=$(git rev-list --count "$main_branch..$branch" 2>/dev/null || echo 0)
-        behind=$(git rev-list --count "$branch..$main_branch" 2>/dev/null || echo 0)
-        
-        level="  "
-        [ "$ahead" -gt 20 ] && level="    "
-        [ "$ahead" -gt 50 ] && level="      "
-        
-        printf "${level}${C_CYAN}├─${C_RESET} %-30s " "$branch"
-        [ "$ahead" -gt 0 ] && printf "${C_GREEN}+%d${C_RESET} " "$ahead"
-        [ "$behind" -gt 0 ] && printf "${C_RED}-%d${C_RESET} " "$behind"
-        
-        total=$((ahead + behind))
-        if [ "$total" -gt 100 ]; then
-            printf "${C_RED}[highly diverged]${C_RESET}"
-        elif [ "$total" -gt 50 ]; then
-            printf "${C_YELLOW}[diverged]${C_RESET}"
-        elif [ "$ahead" -eq 0 ] && [ "$behind" -eq 0 ]; then
-            printf "${C_GREEN}[in sync]${C_RESET}"
-        fi
-        echo
-    done
-    echo
-}
-
-predict_merge_conflicts() {
-    local branch1=$1
-    local branch2=${2:-"main"}
-    
-    git rev-parse --verify "$branch2" >/dev/null 2>&1 || branch2="master"
-    
-    echo -e "\n  ${C_BOLD}${ICON_CONFLICT} MERGE CONFLICT PREDICTION${C_RESET}"
-    echo -e "  ${C_CYAN}$branch1${C_RESET} ${C_DIM}into${C_RESET} ${C_CYAN}$branch2${C_RESET}\n"
-    
-    files1=($(git diff --name-only "$branch2...$branch1" 2>/dev/null))
-    files2=($(git diff --name-only "$branch1...$branch2" 2>/dev/null))
-    
-    conflicts=()
-    for f1 in "${files1[@]}"; do
-        for f2 in "${files2[@]}"; do
-            if [ "$f1" == "$f2" ]; then
-                conflicts+=("$f1")
-            fi
-        done
-    done
-    
-    if [ ${#conflicts[@]} -eq 0 ]; then
-        echo -e "  ${C_GREEN}✓ No potential conflicts detected${C_RESET}"
-        echo -e "  ${C_DIM}Branches modify different files${C_RESET}\n"
-        return 0
-    fi
-    
-    echo -e "  ${C_YELLOW}⚠ Potential conflicts in ${#conflicts[@]} file(s):${C_RESET}\n"
-    
-    for file in "${conflicts[@]}"; do
-        changes1=$(git diff "$branch2" "$branch1" -- "$file" 2>/dev/null | grep "^[+-]" | grep -v "^[+-]\{3\}" | wc -l)
-        changes2=$(git diff "$branch1" "$branch2" -- "$file" 2>/dev/null | grep "^[+-]" | grep -v "^[+-]\{3\}" | wc -l)
-        
-        printf "    ${C_RED}⚔${C_RESET}  %-40s " "$file"
-        printf "${C_YELLOW}%d/%d changes${C_RESET}\n" "$changes1" "$changes2"
-    done
-    
-    echo
-    echo -e "  ${C_HEADER}Recommendation:${C_RESET}"
-    echo -e "  ${C_DIM}Review these files before merging${C_RESET}"
-    echo -e "  ${C_DIM}Use: git diff $branch2...$branch1 -- <file>${C_RESET}\n"
-}
-
-suggest_cleanup() {
-    echo -e "\n  ${C_BOLD}${ICON_CLEANUP} SMART CLEANUP SUGGESTIONS${C_RESET}\n"
-    
-    stale_branches=()
-    merged_branches=()
-    abandoned_branches=()
-    now=$(date +%s)
-    threshold=$((CLEANUP_THRESHOLD * 86400))
-    
-    main_branch="main"
-    git rev-parse --verify main >/dev/null 2>&1 || main_branch="master"
-    
-    while IFS='|' read -r branch date timestamp; do
-        [ "$branch" == "$main_branch" ] || [ "$branch" == "$(git branch --show-current)" ] && continue
-        
-        if git branch --merged "$main_branch" | grep -q "^\s*$branch$" 2>/dev/null; then
-            merged_branches+=("$branch")
-            continue
-        fi
-        
-        age=$((now - timestamp))
-        if [ "$age" -gt "$threshold" ]; then
-            commits=$(git log --since="60 days ago" --oneline "$branch" 2>/dev/null | wc -l)
-            if [ "$commits" -eq 0 ]; then
-                abandoned_branches+=("$branch")
-            else
-                stale_branches+=("$branch")
-            fi
-        fi
-    done < <(git for-each-ref --format='%(refname:short)|%(committerdate:relative)|%(committerdate:unix)' refs/heads 2>/dev/null)
-    
-    total_suggestions=$((${#merged_branches[@]} + ${#stale_branches[@]} + ${#abandoned_branches[@]}))
-    
-    if [ "$total_suggestions" -eq 0 ]; then
-        echo -e "  ${C_GREEN}✓ No cleanup needed!${C_RESET}"
-        echo -e "  ${C_DIM}All branches are active and unmerged${C_RESET}\n"
-        return 0
-    fi
-    
-    if [ ${#merged_branches[@]} -gt 0 ]; then
-        echo -e "  ${C_GREEN}✓ Merged Branches${C_RESET} ${C_DIM}(safe to delete)${C_RESET}"
-        for branch in "${merged_branches[@]}"; do
-            echo -e "    ${C_DIM}└─${C_RESET} $branch"
-        done
-        echo
-    fi
-    
-    if [ ${#abandoned_branches[@]} -gt 0 ]; then
-        echo -e "  ${C_RED}⚠ Abandoned Branches${C_RESET} ${C_DIM}(no activity >60 days)${C_RESET}"
-        for branch in "${abandoned_branches[@]}"; do
-            echo -e "    ${C_DIM}└─${C_RESET} $branch"
-        done
-        echo
-    fi
-    
-    if [ ${#stale_branches[@]} -gt 0 ]; then
-        echo -e "  ${C_YELLOW}⚠ Stale Branches${C_RESET} ${C_DIM}(inactive >$CLEANUP_THRESHOLD days)${C_RESET}"
-        for branch in "${stale_branches[@]}"; do
-            echo -e "    ${C_DIM}└─${C_RESET} $branch"
-        done
-        echo
-    fi
-    
-    echo -e "  ${C_BOLD}Quick Actions:${C_RESET}"
-    [ ${#merged_branches[@]} -gt 0 ] && echo -e "  ${C_CYAN}Delete merged:${C_RESET}     git branch -d ${merged_branches[*]}"
-    [ ${#abandoned_branches[@]} -gt 0 ] && echo -e "  ${C_CYAN}Force delete old:${C_RESET}  git branch -D ${abandoned_branches[*]}"
-    echo
-}
-
-# =========================================================
-#  🚀 SETUP
-# =========================================================
-
-REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-[ -z "$REPO_ROOT" ] && print_error "Not a git repository"
-cd "$REPO_ROOT" || exit 1
-
-LIMIT=$DEFAULT_LIMIT
-FILTER_NAME=""
-FILTER_CODE=""
-MODE="DEFAULT"
-DO_FETCH=0
-
-ACT_CHECKOUT=""
-ACT_MERGE=""
-ACT_DELETE=""
-ACT_RENAME=""
-ACT_SHOW=""
-ACT_TEAM=""
-ACT_COPY_HASH=""
-ACT_COMPARE=""
-ACT_TAGS=""
-ACT_STASH=""
-ACT_INTERACTIVE=0
-ACT_STATUS=""
-ACT_BULK_DELETE=""
-ACT_STATS=""
-ACT_VELOCITY=""
-ACT_CLEANUP=""
-ACT_GRAPH=""
-ACT_CONFLICTS=""
-ACT_CI=""
-ACT_DIFF=""
-ACT_REALTIME_CI=""
-
-if [[ "$1" =~ ^[0-9]+$ ]]; then LIMIT="$1"; shift; fi
-
-while getopts ":f:S:Huc:m:d:r:s:k:t:C:D:TLiP:b:VGAX:M:N:R:h" opt; do
-  case ${opt} in
-    f) FILTER_NAME="$OPTARG" ;;
-    S) FILTER_CODE="$OPTARG"; MODE="CODE_SEARCH" ;;
-    H) MODE="HISTORY" ;; 
-    u) DO_FETCH=1 ;;
-    c) ACT_CHECKOUT="$OPTARG" ;;
-    t) ACT_TEAM="$OPTARG" ;;
-    m) ACT_MERGE="$OPTARG" ;;
-    d) ACT_DELETE="$OPTARG" ;;
-    r) ACT_RENAME="$OPTARG" ;;
-    s) ACT_SHOW="$OPTARG" ;;
-    k) ACT_COPY_HASH="$OPTARG" ;;
-    C) ACT_COMPARE="$OPTARG" ;;
-    D) ACT_DIFF="$OPTARG" ;;
-    T) ACT_TAGS=1 ;;
-    L) ACT_STASH=1 ;;
-    i) ACT_INTERACTIVE=1 ;;
-    P) ACT_STATUS="$OPTARG" ;;
-    b) ACT_BULK_DELETE="$OPTARG" ;;
-    V) ACT_VELOCITY=1 ;;
-    G) ACT_GRAPH=1 ;;
-    A) ACT_CLEANUP=1 ;;
-    X) ACT_STATS="$OPTARG" ;;
-    M) ACT_CONFLICTS="$OPTARG" ;;
-    N) ACT_CI="$OPTARG" ;;
-    R) ACT_REALTIME_CI="$OPTARG" ;;
-    h) cat << 'EOF'
-╔════════════════════════════════════════════════════════════════╗
-║                           GIT-RECORD                           ║
-╚════════════════════════════════════════════════════════════════╝
-
-BASIC USAGE:
-  git-record [limit]              Show branches (default: 10)
-  git-record 50                   Show 50 branches
-  git-record -f <text>            Filter branches by name
-  git-record -H                   Show commit history
-  git-record -u                   Fetch updates before display
-
-WORKFLOW ACTIONS:
-  -c <ID>     Checkout branch by ID
-  -m <ID>     Merge branch into current
-  -d <ID>     Delete branch by ID
-  -r <ID>     Rename branch (interactive)
-  -b <IDs>    Bulk delete branches (comma-separated)
-
-INSPECTION:
-  -s <ID>     Show commit details
-  -t <ID>     Show branch contributors
-  -k <ID>     Copy commit hash to clipboard
-  -S <text>   Search code across branches
-  -C <ID1:ID2> Compare two branches
-  -D <ID1:ID2> Compare commits (detailed diff)
-  -P <ID>     Show push/pull status (ahead/behind)
-
-BASIC FEATURES:
-  -T          Show repository tags
-  -L          Show stash list
-  -i          Interactive mode
-
-🚀 ADVANCED FEATURES (NEW):
-  -V          Team velocity dashboard
-  -G          Branch dependency graph
-  -A          Smart cleanup suggestions
-  -X <ID>     Detailed branch statistics
-  -M <ID>     Predict merge conflicts
-  -N <ID>     CI/CD status (GitHub/GitLab)
-  -R <ID> [interval]  Real-time CI/CD monitoring (default: 5s)
-
-API INTEGRATION:
-  GitHub: Set GITHUB_TOKEN or GH_TOKEN environment variable
-          Or: git config --global github.token YOUR_TOKEN
-  
-  GitLab: Set GITLAB_TOKEN environment variable
-          Or: git config --global gitlab.token YOUR_TOKEN
-
-EXAMPLES:
-  git-record -V                   # Team velocity last 30 days
-  git-record -G                   # Visualize branch relationships
-  git-record -A                   # Get cleanup recommendations
-  git-record -X 3                 # Detailed stats for branch #3
-  git-record -M 5                 # Check merge conflicts
-  git-record -N 3                 # Check CI/CD status (snapshot)
-  git-record -R 3                 # Monitor CI/CD (5s refresh)
-  git-record -R 3 2               # Monitor CI/CD (2s refresh)
-  git-record -C 1:5               # Compare branches 1 and 5
-  git-record -D 1:3               # Compare commits 1 and 3
-
-EOF
-      exit 0 
-      ;;
-    \?) print_error "Invalid option: -$OPTARG. Use -h for help." ;;
-  esac
-done
-
-# Shift to remove processed options
-shift $((OPTIND - 1))
-
-# Capture any remaining arguments (for refresh interval in -R)
-EXTRA_ARGS=("$@")
-
-# Dynamic Limit Expansion
-for req_id in "$ACT_CHECKOUT" "$ACT_TEAM" "$ACT_MERGE" "$ACT_DELETE" "$ACT_RENAME" "$ACT_SHOW" "$ACT_COPY_HASH" "$ACT_STATUS" "$ACT_STATS" "$ACT_CONFLICTS" "$ACT_CI" "$ACT_REALTIME_CI"; do
-    # Only process if it's a valid number
-    if [[ "$req_id" =~ ^[0-9]+$ ]]; then
-        if [ "$req_id" -gt "$LIMIT" ]; then 
-            LIMIT=$req_id
-        fi
-    fi
-done
-
-if [ -n "$ACT_COMPARE" ]; then
-    IFS=':' read -r ID1 ID2 <<< "$ACT_COMPARE"
-    for id in "$ID1" "$ID2"; do
-        if [[ "$id" =~ ^[0-9]+$ ]]; then
-            if [ "$id" -gt "$LIMIT" ]; then 
-                LIMIT=$id
-            fi
-        fi
-    done
-fi
-
-# =========================================================
-# INPUT VALIDATION - Validate all flags BEFORE loading data
-# =========================================================
-
-validate_branch_id() {
-    local value=$1
-    local flag=$2
-    local flag_name=$3
-    
-    if ! [[ "$value" =~ ^[0-9]+$ ]]; then
-        echo -e "\n${C_RED}✖ Invalid branch ID: ${C_BOLD}$value${C_RESET}"
-        echo -e "${C_DIM}Branch ID must be a positive number${C_RESET}"
-        echo -e "${C_DIM}Usage: git-record $flag <ID>${C_RESET}"
-        echo -e "${C_DIM}Example: git-record $flag 3${C_RESET}\n"
-        exit 1
-    fi
-}
-
-validate_comparison() {
-    local value=$1
-    local flag=$2
-    
-    if ! [[ "$value" =~ ^[0-9]+:[0-9]+$ ]]; then
-        echo -e "\n${C_RED}✖ Invalid comparison format: ${C_BOLD}$value${C_RESET}"
-        echo -e "${C_DIM}Format must be: <ID1>:<ID2>${C_RESET}"
-        echo -e "${C_DIM}Usage: git-record $flag <ID1:ID2>${C_RESET}"
-        echo -e "${C_DIM}Example: git-record $flag 1:5${C_RESET}\n"
-        exit 1
-    fi
-}
-
-# Validate all single-ID flags
-[ -n "$ACT_CHECKOUT" ] && validate_branch_id "$ACT_CHECKOUT" "-c" "Checkout"
-[ -n "$ACT_MERGE" ] && validate_branch_id "$ACT_MERGE" "-m" "Merge"
-[ -n "$ACT_DELETE" ] && validate_branch_id "$ACT_DELETE" "-d" "Delete"
-[ -n "$ACT_RENAME" ] && validate_branch_id "$ACT_RENAME" "-r" "Rename"
-[ -n "$ACT_SHOW" ] && validate_branch_id "$ACT_SHOW" "-s" "Show"
-[ -n "$ACT_COPY_HASH" ] && validate_branch_id "$ACT_COPY_HASH" "-k" "Copy hash"
-[ -n "$ACT_TEAM" ] && validate_branch_id "$ACT_TEAM" "-t" "Team contributors"
-[ -n "$ACT_STATUS" ] && validate_branch_id "$ACT_STATUS" "-P" "Push/pull status"
-[ -n "$ACT_STATS" ] && validate_branch_id "$ACT_STATS" "-X" "Statistics"
-[ -n "$ACT_CONFLICTS" ] && validate_branch_id "$ACT_CONFLICTS" "-M" "Merge conflicts"
-[ -n "$ACT_CI" ] && validate_branch_id "$ACT_CI" "-N" "CI/CD status"
-[ -n "$ACT_REALTIME_CI" ] && validate_branch_id "$ACT_REALTIME_CI" "-R" "Real-time CI/CD"
-
-# Validate comparison format
-[ -n "$ACT_COMPARE" ] && validate_comparison "$ACT_COMPARE" "-C"
-[ -n "$ACT_DIFF" ] && validate_comparison "$ACT_DIFF" "-D"
-
-# Validate bulk delete (comma-separated IDs)
-if [ -n "$ACT_BULK_DELETE" ]; then
-    IFS=',' read -ra IDS <<< "$ACT_BULK_DELETE"
-    for id in "${IDS[@]}"; do
-        id=$(echo "$id" | xargs)  # Trim whitespace
-        if ! [[ "$id" =~ ^[0-9]+$ ]]; then
-            echo -e "\n${C_RED}✖ Invalid branch ID in bulk delete: ${C_BOLD}$id${C_RESET}"
-            echo -e "${C_DIM}All IDs must be numbers${C_RESET}"
-            echo -e "${C_DIM}Usage: git-record -b <ID1,ID2,ID3>${C_RESET}"
-            echo -e "${C_DIM}Example: git-record -b 2,5,7${C_RESET}\n"
-            exit 1
-        fi
-    done
-fi
-
-if [ "$DO_FETCH" -eq 1 ]; then
-  echo -e "${C_DIM}Fetching updates...${C_RESET}"
-  git fetch --all --prune --quiet 2>/dev/null || print_warn "Fetch failed - continuing with local data"
-fi
-
-# =========================================================
-#  📊 DATA ENGINE
-# =========================================================
-
-declare -a ROWS_ID ROWS_BRANCH_TEXT ROWS_BRANCH_REF ROWS_HASH ROWS_DATE ROWS_AUTHOR ROWS_AGE_RAW ROWS_MESSAGE
-
-load_data() {
-  CUR_BRANCH=$(git branch --show-current)
-  [ -z "$CUR_BRANCH" ] && CUR_BRANCH="(detached HEAD)"
-  REPO_NAME=$(basename "$REPO_ROOT")
-  COUNT_LOC=$(git for-each-ref refs/heads 2>/dev/null | wc -l)
-  COUNT_REM=$(git for-each-ref refs/remotes 2>/dev/null | wc -l)
-
-  W_ID=2; W_BRANCH=15; W_HASH=7; W_DATE=15; W_AUTHOR=10; W_MESSAGE=20
-  count=0
-
-  if [ "$MODE" == "HISTORY" ]; then
-      while IFS='|' read -r hash subject shorthash date author ts; do
-          add_row "commit/$hash" "$subject" "$shorthash" "$date" "$author" "$ts" "$subject"
-      done < <(git log -n "$LIMIT" --format='%H|%s|%h|%cr|%an|%ct' 2>/dev/null)
-  elif [ "$MODE" == "CODE_SEARCH" ]; then
-      echo -e "${C_CYAN}${ICON_SEARCH} Searching file content for '${C_BOLD}$FILTER_CODE${C_RESET}${C_CYAN}'...${C_RESET}"
-      
-      branches=$(git for-each-ref --format='%(refname:short)' refs/heads refs/remotes/origin 2>/dev/null)
-      found_branches=()
-      
-      for branch in $branches; do
-          if git grep -q "$FILTER_CODE" "$branch" 2>/dev/null; then
-              found_branches+=("$branch")
-              [ "${#found_branches[@]}" -ge "$LIMIT" ] && break
-          fi
-      done
-      
-      if [ ${#found_branches[@]} -eq 0 ]; then
-          echo -e "${C_RED}✖ No matches found for: '$FILTER_CODE'${C_RESET}"
-          exit 0
-      fi
-
-      for branch in "${found_branches[@]}"; do
-          fullref=$(git rev-parse --symbolic-full-name "$branch" 2>/dev/null)
-          [ -z "$fullref" ] && continue
-          IFS='|' read -r hash date author ts msg < <(git show -s --format='%h|%cr|%an|%ct|%s' "$fullref" 2>/dev/null)
-          add_row "$fullref" "$branch" "$hash" "$date" "$author" "$ts" "$msg"
-      done
-  else
-      while IFS='|' read -r fullref branch hash date author ts msg; do
-          if [ -n "$FILTER_NAME" ] && [[ ! "$branch" =~ $FILTER_NAME ]]; then continue; fi
-          add_row "$fullref" "$branch" "$hash" "$date" "$author" "$ts" "$msg"
-      done < <(git for-each-ref --sort=-committerdate --format='%(refname)|%(refname:short)|%(objectname:short)|%(committerdate:relative)|%(authorname)|%(committerdate:unix)|%(subject)' refs/heads refs/remotes 2>/dev/null)
-  fi
-  
-  W_ID=$((W_ID + 2)); W_BRANCH=$((W_BRANCH + 2)); W_HASH=$((W_HASH + 2))
-  W_DATE=$((W_DATE + 2)); W_AUTHOR=$((W_AUTHOR + 2))
-  TOTAL_VISIBLE=$count
-}
-
-add_row() {
-    local ref=$1 txt=$2 hash=$3 date=$4 author=$5 ts=$6 msg=$7
-    [ "$count" -ge "$LIMIT" ] && return
-    count=$((count + 1))
-    ROWS_ID[$count]="$count"
-    ROWS_BRANCH_TEXT[$count]="$txt"
-    ROWS_BRANCH_REF[$count]="$ref"
-    ROWS_HASH[$count]="$hash"
-    ROWS_DATE[$count]="$date"
-    ROWS_AUTHOR[$count]="$author"
-    ROWS_AGE_RAW[$count]="$ts"
-    ROWS_MESSAGE[$count]="${msg:0:30}"
-    
-    [ "${#count}" -gt "$((W_ID - 2))" ] && W_ID=$((${#count} + 2))
-    [ "${#txt}" -gt "$((W_BRANCH - 2))" ] && W_BRANCH=$((${#txt} + 2))
-    [ "${#hash}" -gt "$((W_HASH - 2))" ] && W_HASH=$((${#hash} + 2))
-    [ "${#date}" -gt "$((W_DATE - 2))" ] && W_DATE=$((${#date} + 2))
-    [ "${#author}" -gt "$((W_AUTHOR - 2))" ] && W_AUTHOR=$((${#author} + 2))
-}
-
-get_branch_status() {
-    local branch=$1
-    upstream=$(git rev-parse --abbrev-ref "$branch@{upstream}" 2>/dev/null)
-    
-    if [ -n "$upstream" ]; then
-        ahead=$(git rev-list --count "$upstream..$branch" 2>/dev/null || echo 0)
-        behind=$(git rev-list --count "$branch..$upstream" 2>/dev/null || echo 0)
-        
-        if [ "$ahead" -gt 0 ] && [ "$behind" -gt 0 ]; then
-            echo "${C_YELLOW}${ICON_AHEAD}${ahead} ${ICON_BEHIND}${behind}${C_RESET}"
-        elif [ "$ahead" -gt 0 ]; then
-            echo "${C_GREEN}${ICON_AHEAD}${ahead}${C_RESET}"
-        elif [ "$behind" -gt 0 ]; then
-            echo "${C_RED}${ICON_BEHIND}${behind}${C_RESET}"
-        else
-            echo "${C_DIM}✓${C_RESET}"
-        fi
-    else
-        echo "${C_DIM}-${C_RESET}"
-    fi
-}
-
-render_table() {
-  echo
-  echo -e "  ${C_HEADER}REPOSITORY         CURRENT BRANCH${C_RESET}"
-  echo -e "  ${C_BOLD}${C_REPO}${ICON_REPO} ${REPO_NAME^^}      ${C_CURRENT}${ICON_BRANCH} ${CUR_BRANCH}${C_RESET}"
-  echo -e "  ${C_DIM}──────────────────────────────────────────${C_RESET}"
-  
-  col_name="BRANCH NAME"
-  if [ "$MODE" == "HISTORY" ]; then 
-      echo -e "  ${C_YELLOW}${ICON_LOG} HISTORY MODE: ${C_RESET}${C_DIM}Direct Commit Log${C_RESET}"
-      col_name="COMMIT MESSAGE"
-  elif [ "$MODE" == "CODE_SEARCH" ]; then
-      echo -e "  ${C_CYAN}${ICON_SEARCH} CODE SEARCH: ${C_RESET}${C_DIM}'$FILTER_CODE'${C_RESET}"
-  fi
-  echo
-
-  printf "  ${C_BORDER}┌"; repeat "─" $W_ID; printf "┬"; repeat "─" $W_BRANCH; printf "┬"; repeat "─" $W_HASH; printf "┬"; repeat "─" $W_DATE; printf "┬"; repeat "─" $W_AUTHOR; printf "┐${C_RESET}\n"
-  printf "  ${C_BORDER}│${C_HEADER}"; print_cell "ID" "$((W_ID-2))" ""; printf "  ${C_BORDER}│${C_HEADER}"; print_cell "$col_name" "$((W_BRANCH-2))" ""; printf "  ${C_BORDER}│${C_HEADER}"; print_cell "COMMIT" "$((W_HASH-2))" ""; printf "  ${C_BORDER}│${C_HEADER}"; print_cell "TIME" "$((W_DATE-2))" ""; printf "  ${C_BORDER}│${C_HEADER}"; print_cell "UPDATED BY" "$((W_AUTHOR-2))" ""; printf "  ${C_BORDER}│${C_RESET}\n"
-  printf "  ${C_BORDER}├"; repeat "─" $W_ID; printf "┼"; repeat "─" $W_BRANCH; printf "┼"; repeat "─" $W_HASH; printf "┼"; repeat "─" $W_DATE; printf "┼"; repeat "─" $W_AUTHOR; printf "┤${C_RESET}\n"
-
-  NOW=$(date +%s); STALE_SEC=$((STALE_DAYS * 86400))
-  
-  for ((i=1; i<=TOTAL_VISIBLE; i++)); do
-    txt="${ROWS_BRANCH_TEXT[$i]}"; ref="${ROWS_BRANCH_REF[$i]}"; ts="${ROWS_AGE_RAW[$i]}"
-    is_head=0; [ "$txt" == "$CUR_BRANCH" ] && [ "$MODE" != "HISTORY" ] && is_head=1
-    
-    printf "  ${C_BORDER}│${C_RESET}"
-    [ "$is_head" -eq 1 ] && print_cell "${ROWS_ID[$i]}" "$((W_ID-2))" "${C_CURRENT}${C_BOLD}" || print_cell "${ROWS_ID[$i]}" "$((W_ID-2))" "${C_DIM}"
-    printf "  ${C_BORDER}│${C_RESET}"
-    
-    if [ "$MODE" == "HISTORY" ]; then 
-        print_cell "$txt" "$((W_BRANCH-2))" "${C_LOCAL}"
-    elif [ "$is_head" -eq 1 ]; then 
-        print_cell "${ICON_ARROW} ${txt}" "$((W_BRANCH-2))" "${C_CURRENT}${C_BOLD}"
-    elif [[ "$ref" == refs/heads/* ]]; then 
-        if [ $((NOW - ts)) -gt "$STALE_SEC" ]; then
-            print_cell "${ICON_STALE} ${txt}" "$((W_BRANCH-2))" "${C_WARN}"
-        else
-            print_cell "  ${txt}" "$((W_BRANCH-2))" "${C_LOCAL}"
-        fi
-    else
-        if [[ "$txt" == origin/* ]]; then
-            display="origin/${C_REMOTE_TXT}${txt#origin/}"
-        else
-            display="$txt"
-        fi
-        print_cell "  ${display}" "$((W_BRANCH-2))" "${C_REMOTE}"
-    fi
-    
-    printf "  ${C_BORDER}│${C_RESET}"
-    [ "$is_head" -eq 1 ] && print_cell "${ROWS_HASH[$i]}" "$((W_HASH-2))" "${C_CURRENT}" || print_cell "${ROWS_HASH[$i]}" "$((W_HASH-2))" "${C_DIM}"
-    printf "  ${C_BORDER}│${C_RESET}"
-    [ "$is_head" -eq 1 ] && print_cell "${ROWS_DATE[$i]}" "$((W_DATE-2))" "${C_CURRENT}" || print_cell "${ROWS_DATE[$i]}" "$((W_DATE-2))" "${C_TIME}"
-    printf "  ${C_BORDER}│${C_RESET}"
-    [ "$is_head" -eq 1 ] && print_cell "${ROWS_AUTHOR[$i]}" "$((W_AUTHOR-2))" "${C_CURRENT}" || print_cell "${ROWS_AUTHOR[$i]}" "$((W_AUTHOR-2))" "${C_AUTHOR}"
-    printf "  ${C_BORDER}│${C_RESET}\n"
-  done
-  
-  printf "  ${C_BORDER}└"; repeat "─" $W_ID; printf "┴"; repeat "─" $W_BRANCH; printf "┴"; repeat "─" $W_HASH; printf "┴"; repeat "─" $W_DATE; printf "┴"; repeat "─" $W_AUTHOR; printf "┘${C_RESET}\n"
-}
-
-print_suggestions() {
-  echo
-  echo -e "  ${C_BOLD}${ICON_TIP} COMMAND CENTER${C_RESET}"
-  echo
-  printf "  ${C_CYAN}%-30s${C_RESET}  ${C_CYAN}%-30s${C_RESET}  ${C_CYAN}%-30s${C_RESET}\n" "🚀 WORKFLOW" "🔍 INSPECT" "📊 ANALYTICS"
-  printf "  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}\n" "git-record -c <ID>" "git-record -s <ID>" "git-record -V"
-  printf "  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}\n" "(Checkout)" "(Details)" "(Team Velocity)"
-  echo
-  printf "  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}\n" "git-record -m <ID>" "git-record -C <ID:ID>" "git-record -G"
-  printf "  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}\n" "(Merge)" "(Compare)" "(Branch Graph)"
-  echo
-  printf "  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}\n" "git-record -b <IDs>" "git-record -D <ID:ID>" "git-record -A"
-  printf "  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}\n" "(Bulk Delete)" "(Commit Diff)" "(Cleanup)"
-  echo
-  printf "  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}\n" "git-record -R <ID>" "git-record -X <ID>" "git-record -N <ID>"
-  printf "  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}\n" "(Real-time CI)" "(Statistics)" "(CI Status)"
-  echo
-  printf "  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}\n" "" "git-record -M <ID>" ""
-  printf "  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}  ${C_DIM}%-30s${C_RESET}\n" "" "(Conflicts)" ""
-  echo
-  echo -e "  ${C_DIM}Use -h for complete help | -i for interactive mode${C_RESET}"
-  echo
-}
-
-# =========================================================
-#  ⚡ EXECUTION - ADVANCED FEATURES FIRST
-# =========================================================
-
-if [ -n "$ACT_VELOCITY" ]; then
-    calculate_team_velocity
-    exit 0
-fi
-
-if [ -n "$ACT_GRAPH" ]; then
-    generate_branch_graph
-    exit 0
-fi
-
-if [ -n "$ACT_CLEANUP" ]; then
-    suggest_cleanup
-    exit 0
-fi
-
-if [ -n "$ACT_TAGS" ]; then
-    echo -e "\n  ${C_BOLD}${ICON_TAG} REPOSITORY TAGS${C_RESET}\n"
-    if ! git tag -l | head -1 >/dev/null 2>&1; then
-        echo -e "  ${C_DIM}No tags found${C_RESET}\n"
-        exit 0
-    fi
-    git tag -l --sort=-creatordate --format='  %(refname:short)|%(creatordate:relative)|%(subject)' | head -n "${LIMIT}" | while IFS='|' read -r tag date msg; do
-        printf "  ${C_CYAN}%-20s${C_RESET} ${C_DIM}%-15s${C_RESET} %s\n" "$tag" "$date" "$msg"
-    done
-    echo
-    exit 0
-fi
-
-if [ -n "$ACT_STASH" ]; then
-    echo -e "\n  ${C_BOLD}${ICON_STASH} STASH LIST${C_RESET}\n"
-    if ! git stash list | head -1 >/dev/null 2>&1; then
-        echo -e "  ${C_DIM}No stashed changes${C_RESET}\n"
-        exit 0
-    fi
-    git stash list --format='  %C(yellow)%gd%C(reset)|%C(cyan)%cr%C(reset)|%s' | head -n "${LIMIT}" | while IFS='|' read -r stash date msg; do
-        printf "%s  ${C_DIM}%-15s${C_RESET} %s\n" "$stash" "$date" "$msg"
-    done
-    echo -e "\n  ${C_DIM}Use: git stash apply <stash@{N}> to restore${C_RESET}\n"
-    exit 0
-fi
-
-# =========================================================
-# LOAD DATA - CRITICAL
-# =========================================================
-
-load_data
-
-# =========================================================
-# HANDLE -X, -M, -N BEFORE TABLE DISPLAY
-# =========================================================
-
-if [ -n "$ACT_STATS" ]; then
-    branch="${ROWS_BRANCH_TEXT[$ACT_STATS]}"
-    
-    if [ -z "$branch" ]; then
-        echo -e "\n  ${C_RED}✖ Invalid branch ID: $ACT_STATS${C_RESET}"
-        echo -e "  ${C_DIM}Available IDs: 1-$TOTAL_VISIBLE${C_RESET}\n"
-        exit 1
-    fi
-    
-    echo -e "\n  ${C_BOLD}${ICON_STATS} BRANCH STATISTICS: ${C_CYAN}$branch${C_RESET}\n"
-    
-    IFS='|' read -r commits files additions deletions authors < <(get_branch_metrics "$branch")
-    freq=$(calculate_commit_frequency "$branch" 30)
-    
-    echo -e "  ${C_HEADER}Commit Activity:${C_RESET}"
-    printf "    %-20s %s\n" "Total Commits:" "$commits"
-    printf "    %-20s %.2f per day\n" "Frequency:" "$freq"
-    printf "    %-20s %s\n" "Contributors:" "$authors"
-    echo
-    
-    echo -e "  ${C_HEADER}Code Changes:${C_RESET}"
-    printf "    %-20s %s\n" "Files Modified:" "$files"
-    printf "    %-20s ${C_GREEN}+%s${C_RESET}\n" "Lines Added:" "$additions"
-    printf "    %-20s ${C_RED}-%s${C_RESET}\n" "Lines Deleted:" "$deletions"
-    printf "    %-20s %s\n" "Net Change:" "$((additions - deletions))"
-    echo
-    
-    echo -e "  ${C_HEADER}Recent Activity (Last 10 commits):${C_RESET}"
-    git log --oneline -10 "$branch" 2>/dev/null | sed 's/^/    /' || echo "    ${C_DIM}No commits found${C_RESET}"
-    echo
-    exit 0
-fi
-
-if [ -n "$ACT_CONFLICTS" ]; then
-    branch="${ROWS_BRANCH_TEXT[$ACT_CONFLICTS]}"
-    
-    if [ -z "$branch" ]; then
-        echo -e "\n  ${C_RED}✖ Invalid branch ID: $ACT_CONFLICTS${C_RESET}"
-        echo -e "  ${C_DIM}Available IDs: 1-$TOTAL_VISIBLE${C_RESET}\n"
-        exit 1
-    fi
-    
-    clean_branch="$branch"
-    [[ "$branch" == origin/* ]] && clean_branch="${branch#origin/}"
-    
-    predict_merge_conflicts "$clean_branch"
-    exit 0
-fi
-
-if [ -n "$ACT_CI" ]; then
-    branch="${ROWS_BRANCH_TEXT[$ACT_CI]}"
-    
-    if [ -z "$branch" ]; then
-        echo -e "\n  ${C_RED}✖ Invalid branch ID: $ACT_CI${C_RESET}"
-        echo -e "  ${C_DIM}Available IDs: 1-$TOTAL_VISIBLE${C_RESET}\n"
-        exit 1
-    fi
-    
-    echo -e "\n  ${C_BOLD}${ICON_CI} CI/CD STATUS${C_RESET}"
-    echo -e "  ${C_DIM}Branch: ${C_CYAN}$branch${C_RESET}\n"
-    
-    platform=$(detect_remote_platform)
-    
-    if [ -z "$platform" ]; then
-        echo -e "  ${C_YELLOW}⚠ Could not detect Git platform${C_RESET}"
-        echo -e "  ${C_DIM}Supported platforms:${C_RESET}"
-        echo -e "  ${C_DIM}- GitHub (github.com or self-hosted)${C_RESET}"
-        echo -e "  ${C_DIM}- GitLab (gitlab.com or self-hosted)${C_RESET}\n"
-        echo -e "  ${C_HEADER}Your remote URL:${C_RESET}"
-        remote_url=$(git config --get remote.origin.url 2>/dev/null)
-        echo -e "    ${C_CYAN}$remote_url${C_RESET}\n"
-        echo -e "  ${C_DIM}Tip: URL must contain 'github' or 'gitlab'${C_RESET}"
-        echo
-        exit 1
-    fi
-    
-    if [ "$platform" == "github" ]; then
-        token=$(get_github_token)
-        if [ -z "$token" ]; then
-            echo -e "  ${C_CYAN}${ICON_GITHUB} GitHub${C_RESET}\n"
-            echo -e "  ${C_YELLOW}⚠ No GitHub API token configured${C_RESET}\n"
-            echo -e "  ${C_HEADER}To enable CI/CD status:${C_RESET}"
-            echo -e "  ${C_DIM}1. Create token: https://github.com/settings/tokens${C_RESET}"
-            echo -e "  ${C_DIM}2. Set environment variable:${C_RESET}"
-            echo -e "     ${C_CYAN}export GITHUB_TOKEN=\"ghp_your_token\"${C_RESET}"
-            echo -e "  ${C_DIM}   OR set in git config:${C_RESET}"
-            echo -e "     ${C_CYAN}git config --global github.token ghp_your_token${C_RESET}"
-            echo
-            exit 1
-        fi
-    elif [ "$platform" == "gitlab" ]; then
-        token=$(get_gitlab_token)
-        if [ -z "$token" ]; then
-            gitlab_domain=$(get_gitlab_domain)
-            echo -e "  ${C_CYAN}${ICON_GITLAB} GitLab${C_RESET}\n"
-            echo -e "  ${C_DIM}Server: $gitlab_domain${C_RESET}\n"
-            echo -e "  ${C_YELLOW}⚠ No GitLab API token configured${C_RESET}\n"
-            echo -e "  ${C_HEADER}To enable CI/CD status:${C_RESET}"
-            if [ "$gitlab_domain" == "gitlab.com" ]; then
-                echo -e "  ${C_DIM}1. Create token: https://gitlab.com/-/profile/personal_access_tokens${C_RESET}"
-            else
-                echo -e "  ${C_DIM}1. Create token: https://$gitlab_domain/-/profile/personal_access_tokens${C_RESET}"
-            fi
-            echo -e "  ${C_DIM}2. Set environment variable:${C_RESET}"
-            echo -e "     ${C_CYAN}export GITLAB_TOKEN=\"glpat_your_token\"${C_RESET}"
-            echo -e "  ${C_DIM}   OR set in git config:${C_RESET}"
-            echo -e "     ${C_CYAN}git config --global gitlab.token glpat_your_token${C_RESET}"
-            echo -e "\n  ${C_DIM}Required scopes: api, read_api, read_repository${C_RESET}"
-            echo
-            exit 1
-        fi
-    fi
-    
-    clean_branch="$branch"
-    [[ "$branch" == origin/* ]] && clean_branch="${branch#origin/}"
-    
-    if [ "$platform" == "github" ]; then
-        echo -e "  ${C_CYAN}${ICON_GITHUB} GitHub${C_RESET}\n"
-        repo=$(parse_github_repo)
-        
-        if [ -z "$repo" ]; then
-            echo -e "  ${C_RED}✖ Could not parse repository from remote URL${C_RESET}\n"
-            exit 1
-        fi
-        
-        echo -e "  ${C_DIM}Repository: $repo${C_RESET}"
-        echo -e "  ${C_DIM}Branch: $clean_branch${C_RESET}\n"
-        
-        # Try to get workflows first (GitHub Actions)
-        workflows=$(fetch_github_workflows "$repo" "$clean_branch")
-        
-        if [ -n "$workflows" ] && [ "$workflows" != "null" ]; then
-            run_count=$(echo "$workflows" | jq '.total_count' 2>/dev/null)
-            
-            if [ "$run_count" -gt 0 ]; then
-                # Workflow exists - show full details
-                # (Keep existing detailed workflow display code here)
-                run_id=$(echo "$workflows" | jq -r '.workflow_runs[0].id' 2>/dev/null)
-                run_name=$(echo "$workflows" | jq -r '.workflow_runs[0].name' 2>/dev/null)
-                run_status=$(echo "$workflows" | jq -r '.workflow_runs[0].status' 2>/dev/null)
-                run_conclusion=$(echo "$workflows" | jq -r '.workflow_runs[0].conclusion' 2>/dev/null)
-                
-                # Display status based on workflow state
-                if [ "$run_status" == "completed" ]; then
-                    case "$run_conclusion" in
-                        success) echo -e "  ${C_GREEN}✓ Workflow Passed${C_RESET}" ;;
-                        failure) echo -e "  ${C_RED}✗ Workflow Failed${C_RESET}" ;;
-                        cancelled) echo -e "  ${C_YELLOW}⊗ Workflow Cancelled${C_RESET}" ;;
-                        skipped) echo -e "  ${C_DIM}⊘ Workflow Skipped${C_RESET}" ;;
-                        *) echo -e "  ${C_YELLOW}? Unknown: $run_conclusion${C_RESET}" ;;
-                    esac
-                elif [ "$run_status" == "in_progress" ]; then
-                    echo -e "  ${C_YELLOW}⏳ Workflow Running${C_RESET}"
-                elif [ "$run_status" == "queued" ]; then
-                    echo -e "  ${C_CYAN}○ Workflow Queued${C_RESET}"
-                else
-                    echo -e "  ${C_YELLOW}? Status: $run_status${C_RESET}"
-                fi
-                
-                echo
-                echo -e "  ${C_HEADER}Workflow:${C_RESET} $run_name"
-                echo -e "  ${C_HEADER}Run ID:${C_RESET} $run_id"
-            else
-                # No workflow runs found
-                echo -e "  ${C_YELLOW}⚠ No CI/CD Configured${C_RESET}\n"
-                echo -e "  ${C_HEADER}Reason:${C_RESET}"
-                echo -e "    This repository has no GitHub Actions workflows\n"
-                echo -e "  ${C_HEADER}To enable CI/CD:${C_RESET}"
-                echo -e "    1. Create ${C_CYAN}.github/workflows/ci.yml${C_RESET}"
-                echo -e "    2. Add workflow configuration"
-                echo -e "    3. Push to GitHub\n"
-                echo -e "  ${C_DIM}Example workflow:${C_RESET}"
-                echo -e "    ${C_CYAN}https://docs.github.com/en/actions/quickstart${C_RESET}"
-            fi
-        else
-            # Fallback to old status API
-            status=$(fetch_github_ci_status "$repo" "$clean_branch")
-            
-            if [ -n "$status" ] && command -v jq >/dev/null 2>&1; then
-                state=$(echo "$status" | jq -r '.state' 2>/dev/null)
-                total=$(echo "$status" | jq -r '.total_count' 2>/dev/null)
-                
-                if [ "$total" == "0" ] || [ "$total" == "null" ]; then
-                    # No checks configured
-                    echo -e "  ${C_YELLOW}⚠ No CI/CD Configured${C_RESET}\n"
-                    echo -e "  ${C_HEADER}Reason:${C_RESET}"
-                    echo -e "    No GitHub Actions or status checks found\n"
-                    echo -e "  ${C_HEADER}This repository doesn't have:${C_RESET}"
-                    echo -e "    • GitHub Actions workflows (${C_CYAN}.github/workflows/${C_RESET})"
-                    echo -e "    • External CI services (Travis, CircleCI, etc.)\n"
-                    echo -e "  ${C_HEADER}To add CI/CD:${C_RESET}"
-                    echo -e "    Create ${C_CYAN}.github/workflows/ci.yml${C_RESET} with:"
-                    echo -e "    ${C_DIM}───────────────────────────────${C_RESET}"
-                    echo -e "    ${C_DIM}name: CI${C_RESET}"
-                    echo -e "    ${C_DIM}on: [push]${C_RESET}"
-                    echo -e "    ${C_DIM}jobs:${C_RESET}"
-                    echo -e "    ${C_DIM}  build:${C_RESET}"
-                    echo -e "    ${C_DIM}    runs-on: ubuntu-latest${C_RESET}"
-                    echo -e "    ${C_DIM}    steps:${C_RESET}"
-                    echo -e "    ${C_DIM}      - uses: actions/checkout@v2${C_RESET}"
-                    echo -e "    ${C_DIM}      - run: npm install${C_RESET}"
-                    echo -e "    ${C_DIM}───────────────────────────────${C_RESET}"
-                else
-                    # Has status checks
-                    case "$state" in
-                        success) echo -e "  ${C_GREEN}✓ Build Passing${C_RESET} ($total checks)" ;;
-                        pending) echo -e "  ${C_YELLOW}⏳ Build Pending${C_RESET} ($total checks)" ;;
-                        failure) echo -e "  ${C_RED}✗ Build Failed${C_RESET} ($total checks)" ;;
-                        *) echo -e "  ${C_YELLOW}? Unknown state: $state${C_RESET}" ;;
-                    esac
-                    
-                    echo
-                    echo -e "  ${C_HEADER}Check Details:${C_RESET}"
-                    echo "$status" | jq -r '.statuses[] | "    \(.context): \(.state)"' 2>/dev/null
-                fi
-            else
-                # API call failed
-                echo -e "  ${C_RED}✖ Could not fetch CI status${C_RESET}\n"
-                echo -e "  ${C_HEADER}Possible reasons:${C_RESET}"
-                echo -e "    • API token not configured"
-                echo -e "    • Network error"
-                echo -e "    • API rate limit exceeded"
-                echo -e "    • Repository not accessible\n"
-                echo -e "  ${C_HEADER}Check:${C_RESET}"
-                echo -e "    ${C_CYAN}echo \$GITHUB_TOKEN${C_RESET}"
-            fi
-        fi
-        
-    elif [ "$platform" == "gitlab" ]; then
-        echo -e "  ${C_CYAN}${ICON_GITLAB} GitLab${C_RESET}\n"
-        repo=$(parse_gitlab_repo)
-        gitlab_domain=$(get_gitlab_domain)
-        
-        if [ -z "$repo" ]; then
-            echo -e "  ${C_RED}✖ Could not parse repository${C_RESET}\n"
-            exit 1
-        fi
-        
-        echo -e "  ${C_DIM}Server: $gitlab_domain${C_RESET}"
-        echo -e "  ${C_DIM}Repository: $repo${C_RESET}"
-        echo -e "  ${C_DIM}Branch: $clean_branch${C_RESET}\n"
-        
-        status=$(fetch_gitlab_ci_status "$repo" "$clean_branch")
-        
-        if [ -n "$status" ] && command -v jq >/dev/null 2>&1; then
-            # Check for error first
-            error=$(echo "$status" | jq -r '.error' 2>/dev/null)
-            if [ -n "$error" ] && [ "$error" != "null" ]; then
-                echo -e "  ${C_RED}✖ API Error: $error${C_RESET}\n"
-                exit 1
-            fi
-            
-            pipeline=$(echo "$status" | jq -r '.last_pipeline.status' 2>/dev/null)
-            
-            case "$pipeline" in
-                success) echo -e "  ${C_GREEN}✓ Pipeline Passed${C_RESET}" ;;
-                running) echo -e "  ${C_YELLOW}⏳ Pipeline Running${C_RESET}" ;;
-                failed) echo -e "  ${C_RED}✗ Pipeline Failed${C_RESET}" ;;
-                pending) echo -e "  ${C_YELLOW}⏳ Pipeline Pending${C_RESET}" ;;
-                manual) echo -e "  ${C_BLUE}⚙️  Pipeline Manual${C_RESET} ${C_DIM}(requires manual trigger)${C_RESET}" ;;
-                skipped) echo -e "  ${C_DIM}⊘ Pipeline Skipped${C_RESET}" ;;
-                canceled) echo -e "  ${C_YELLOW}⊗ Pipeline Canceled${C_RESET}" ;;
-                created) echo -e "  ${C_CYAN}○ Pipeline Created${C_RESET}" ;;
-                *)
-                    if [ "$pipeline" == "null" ] || [ -z "$pipeline" ]; then
-                        echo -e "  ${C_YELLOW}⚠ No pipeline status${C_RESET}"
-                        echo -e "  ${C_DIM}Branch may not be pushed or has no CI${C_RESET}"
-                    else
-                        echo -e "  ${C_YELLOW}? Unknown status: $pipeline${C_RESET}"
-                    fi
-                    ;;
-            esac
-            
-            # Show pipeline details if available
-            if [ "$pipeline" != "null" ] && [ -n "$pipeline" ]; then
-                echo
-                echo -e "  ${C_HEADER}Pipeline Details:${C_RESET}"
-                
-                # Pipeline info
-                pipeline_id=$(echo "$status" | jq -r '.last_pipeline.id' 2>/dev/null)
-                pipeline_iid=$(echo "$status" | jq -r '.last_pipeline.iid' 2>/dev/null)
-                pipeline_source=$(echo "$status" | jq -r '.last_pipeline.source' 2>/dev/null)
-                pipeline_ref=$(echo "$status" | jq -r '.last_pipeline.ref' 2>/dev/null)
-                pipeline_created=$(echo "$status" | jq -r '.last_pipeline.created_at' 2>/dev/null)
-                pipeline_updated=$(echo "$status" | jq -r '.last_pipeline.updated_at' 2>/dev/null)
-                pipeline_url=$(echo "$status" | jq -r '.last_pipeline.web_url' 2>/dev/null)
-                
-                # Commit info
-                commit_author=$(echo "$status" | jq -r '.author_name' 2>/dev/null)
-                commit_email=$(echo "$status" | jq -r '.author_email' 2>/dev/null)
-                commit_date=$(echo "$status" | jq -r '.committed_date' 2>/dev/null)
-                commit_title=$(echo "$status" | jq -r '.title' 2>/dev/null)
-                commit_id=$(echo "$status" | jq -r '.short_id' 2>/dev/null)
-                
-                # Display pipeline info
-                if [ "$pipeline_id" != "null" ] && [ -n "$pipeline_id" ]; then
-                    echo -e "    ${C_CYAN}Pipeline:${C_RESET} #$pipeline_iid (ID: $pipeline_id)"
-                fi
-                
-                if [ "$pipeline_ref" != "null" ] && [ -n "$pipeline_ref" ]; then
-                    echo -e "    ${C_CYAN}Branch:${C_RESET} $pipeline_ref"
-                fi
-                
-                if [ "$pipeline_source" != "null" ] && [ -n "$pipeline_source" ]; then
-                    echo -e "    ${C_CYAN}Triggered by:${C_RESET} $pipeline_source"
-                fi
-                
-                echo
-                echo -e "  ${C_HEADER}Last Commit:${C_RESET}"
-                
-                if [ "$commit_id" != "null" ] && [ -n "$commit_id" ]; then
-                    echo -e "    ${C_CYAN}SHA:${C_RESET} $commit_id"
-                fi
-                
-                if [ "$commit_author" != "null" ] && [ -n "$commit_author" ]; then
-                    if [ "$commit_email" != "null" ] && [ -n "$commit_email" ]; then
-                        echo -e "    ${C_CYAN}Author:${C_RESET} $commit_author <$commit_email>"
-                    else
-                        echo -e "    ${C_CYAN}Author:${C_RESET} $commit_author"
-                    fi
-                fi
-                
-                if [ "$commit_date" != "null" ] && [ -n "$commit_date" ]; then
-                    # Convert to relative time
-                    commit_ts=$(date -d "$commit_date" +%s 2>/dev/null || echo "")
-                    if [ -n "$commit_ts" ]; then
-                        now_ts=$(date +%s)
-                        diff_sec=$((now_ts - commit_ts))
-                        
-                        if [ $diff_sec -lt 60 ]; then
-                            rel_time="$diff_sec seconds ago"
-                        elif [ $diff_sec -lt 3600 ]; then
-                            rel_time="$((diff_sec / 60)) minutes ago"
-                        elif [ $diff_sec -lt 86400 ]; then
-                            rel_time="$((diff_sec / 3600)) hours ago"
-                        else
-                            rel_time="$((diff_sec / 86400)) days ago"
-                        fi
-                        
-                        echo -e "    ${C_CYAN}Committed:${C_RESET} $rel_time"
-                    else
-                        echo -e "    ${C_CYAN}Committed:${C_RESET} $commit_date"
-                    fi
-                fi
-                
-                if [ "$commit_title" != "null" ] && [ -n "$commit_title" ]; then
-                    # Truncate if too long
-                    if [ ${#commit_title} -gt 70 ]; then
-                        commit_title="${commit_title:0:70}..."
-                    fi
-                    echo -e "    ${C_CYAN}Message:${C_RESET} ${C_DIM}\"$commit_title\"${C_RESET}"
-                fi
-                
-                echo
-                echo -e "  ${C_HEADER}Pipeline Timeline:${C_RESET}"
-                
-                if [ "$pipeline_created" != "null" ] && [ -n "$pipeline_created" ]; then
-                    created_ts=$(date -d "$pipeline_created" +%s 2>/dev/null || echo "")
-                    if [ -n "$created_ts" ]; then
-                        now_ts=$(date +%s)
-                        diff_sec=$((now_ts - created_ts))
-                        
-                        if [ $diff_sec -lt 60 ]; then
-                            rel_time="$diff_sec seconds ago"
-                        elif [ $diff_sec -lt 3600 ]; then
-                            rel_time="$((diff_sec / 60)) minutes ago"
-                        elif [ $diff_sec -lt 86400 ]; then
-                            rel_time="$((diff_sec / 3600)) hours ago"
-                        else
-                            rel_time="$((diff_sec / 86400)) days ago"
-                        fi
-                        
-                        echo -e "    ${C_CYAN}Created:${C_RESET} $rel_time"
-                        
-                        # Calculate duration if pipeline has been updated
-                        if [ "$pipeline_updated" != "null" ] && [ -n "$pipeline_updated" ]; then
-                            updated_ts=$(date -d "$pipeline_updated" +%s 2>/dev/null || echo "")
-                            if [ -n "$updated_ts" ]; then
-                                duration=$((updated_ts - created_ts))
-                                
-                                if [ $duration -lt 60 ]; then
-                                    duration_str="${duration}s"
-                                elif [ $duration -lt 3600 ]; then
-                                    min=$((duration / 60))
-                                    sec=$((duration % 60))
-                                    duration_str="${min}m ${sec}s"
-                                else
-                                    hour=$((duration / 3600))
-                                    min=$(((duration % 3600) / 60))
-                                    duration_str="${hour}h ${min}m"
-                                fi
-                                
-                                # Show last action time
-                                diff_sec=$((now_ts - updated_ts))
-                                if [ $diff_sec -lt 60 ]; then
-                                    last_action="$diff_sec seconds ago"
-                                elif [ $diff_sec -lt 3600 ]; then
-                                    last_action="$((diff_sec / 60)) minutes ago"
-                                elif [ $diff_sec -lt 86400 ]; then
-                                    last_action="$((diff_sec / 3600)) hours ago"
-                                else
-                                    last_action="$((diff_sec / 86400)) days ago"
-                                fi
-                                
-                                echo -e "    ${C_CYAN}Last action:${C_RESET} $last_action"
-                                
-                                # Show duration based on status
-                                if [[ "$pipeline" == "running" ]]; then
-                                    echo -e "    ${C_CYAN}Running for:${C_RESET} $duration_str"
-                                else
-                                    echo -e "    ${C_CYAN}Duration:${C_RESET} $duration_str"
-                                fi
-                            fi
-                        fi
-                    else
-                        echo -e "    ${C_CYAN}Created:${C_RESET} $pipeline_created"
-                    fi
-                fi
-                
-                # Fetch and display job details
-                if [ "$pipeline_id" != "null" ] && [ -n "$pipeline_id" ]; then
-                    jobs=$(fetch_gitlab_pipeline_details "$repo" "$pipeline_id")
-                    
-                    if [ -n "$jobs" ] && [ "$jobs" != "[]" ]; then
-                        job_count=$(echo "$jobs" | jq 'length' 2>/dev/null)
-                        
-                        if [ "$job_count" -gt 0 ]; then
-                            echo
-                            echo -e "  ${C_HEADER}Pipeline Jobs ($job_count total):${C_RESET}"
-                            
-                            # Count jobs by status
-                            success_count=$(echo "$jobs" | jq '[.[] | select(.status=="success")] | length' 2>/dev/null)
-                            failed_count=$(echo "$jobs" | jq '[.[] | select(.status=="failed")] | length' 2>/dev/null)
-                            running_count=$(echo "$jobs" | jq '[.[] | select(.status=="running")] | length' 2>/dev/null)
-                            pending_count=$(echo "$jobs" | jq '[.[] | select(.status=="pending")] | length' 2>/dev/null)
-                            created_count=$(echo "$jobs" | jq '[.[] | select(.status=="created")] | length' 2>/dev/null)
-                            manual_count=$(echo "$jobs" | jq '[.[] | select(.status=="manual")] | length' 2>/dev/null)
-                            skipped_count=$(echo "$jobs" | jq '[.[] | select(.status=="skipped")] | length' 2>/dev/null)
-                            canceled_count=$(echo "$jobs" | jq '[.[] | select(.status=="canceled")] | length' 2>/dev/null)
-                            
-                            # Show summary
-                            summary=""
-                            [ "$success_count" -gt 0 ] && summary="$summary ${C_GREEN}✓ $success_count passed${C_RESET}"
-                            [ "$failed_count" -gt 0 ] && summary="$summary ${C_RED}✗ $failed_count failed${C_RESET}"
-                            [ "$running_count" -gt 0 ] && summary="$summary ${C_YELLOW}⏳ $running_count running${C_RESET}"
-                            [ "$pending_count" -gt 0 ] && summary="$summary ${C_CYAN}⊙ $pending_count pending${C_RESET}"
-                            [ "$created_count" -gt 0 ] && summary="$summary ${C_CYAN}○ $created_count waiting${C_RESET}"
-                            [ "$manual_count" -gt 0 ] && summary="$summary ${C_BLUE}⚙ $manual_count manual${C_RESET}"
-                            [ "$canceled_count" -gt 0 ] && summary="$summary ${C_YELLOW}⊗ $canceled_count canceled${C_RESET}"
-                            [ "$skipped_count" -gt 0 ] && summary="$summary ${C_DIM}⊘ $skipped_count skipped${C_RESET}"
-                            
-                            if [ -n "$summary" ]; then
-                                echo -e "   $summary"
-                                echo
-                            fi
-                            
-                            # Show individual jobs (limit to 10)
-                            echo "$jobs" | jq -r '.[] | "\(.stage)|\(.name)|\(.status)|\(.duration)"' 2>/dev/null | head -10 | while IFS='|' read -r stage name status duration; do
-                                # Format status with icon and color
-                                case "$status" in
-                                    success) status_icon="${C_GREEN}✓${C_RESET}" ;;
-                                    failed) status_icon="${C_RED}✗${C_RESET}" ;;
-                                    running) status_icon="${C_YELLOW}⏳${C_RESET}" ;;
-                                    pending) status_icon="${C_CYAN}○${C_RESET}" ;;
-                                    manual) status_icon="${C_BLUE}⚙${C_RESET}" ;;
-                                    skipped) status_icon="${C_DIM}⊘${C_RESET}" ;;
-                                    canceled) status_icon="${C_YELLOW}⊗${C_RESET}" ;;
-                                    created) status_icon="${C_CYAN}○${C_RESET}" ;;
-                                    *) status_icon="${C_DIM}?${C_RESET}" ;;
-                                esac
-                                
-                                # Format duration
-                                if [ "$duration" != "null" ] && [ -n "$duration" ]; then
-                                    # Convert decimal to integer (bash doesn't support floats)
-                                    duration_int=$(echo "$duration" | cut -d. -f1)
-                                    
-                                    # Handle empty or invalid values
-                                    if [ -z "$duration_int" ] || [ "$duration_int" == "null" ]; then
-                                        duration_str="-"
-                                    elif [ "$duration_int" -lt 60 ]; then
-                                        duration_str="${duration_int}s"
-                                    elif [ "$duration_int" -lt 3600 ]; then
-                                        min=$((duration_int / 60))
-                                        sec=$((duration_int % 60))
-                                        duration_str="${min}m ${sec}s"
-                                    else
-                                        hour=$((duration_int / 3600))
-                                        min=$(((duration_int % 3600) / 60))
-                                        duration_str="${hour}h ${min}m"
-                                    fi
-                                else
-                                    duration_str="-"
-                                fi
-                                
-                                printf "    %s %-12s %-30s %s\n" "$status_icon" "$stage" "$name" "${C_DIM}$duration_str${C_RESET}"
-                            done
-                            
-                            if [ "$job_count" -gt 10 ]; then
-                                echo -e "    ${C_DIM}... and $((job_count - 10)) more jobs${C_RESET}"
-                            fi
-                        fi
-                    fi
-                fi
-                
-                if [ "$pipeline_url" != "null" ] && [ -n "$pipeline_url" ]; then
-                    echo
-                    echo -e "  ${C_CYAN}View Full Pipeline:${C_RESET} $pipeline_url"
-                fi
-            fi
-            
-            # Check for merge requests
-            mrs=$(fetch_gitlab_merge_requests "$repo" "$clean_branch")
-            if [ -n "$mrs" ] && [ "$mrs" != "[]" ] && [ "$mrs" != "null" ]; then
-                mr_count=$(echo "$mrs" | jq 'length' 2>/dev/null)
-                
-                if [ "$mr_count" -gt 0 ]; then
-                    echo
-                    echo -e "  ${C_HEADER}Merge Request:${C_RESET}"
-                    
-                    # Get first MR details
-                    mr_title=$(echo "$mrs" | jq -r '.[0].title' 2>/dev/null)
-                    mr_state=$(echo "$mrs" | jq -r '.[0].state' 2>/dev/null)
-                    mr_author=$(echo "$mrs" | jq -r '.[0].author.name' 2>/dev/null)
-                    mr_created=$(echo "$mrs" | jq -r '.[0].created_at' 2>/dev/null)
-                    mr_updated=$(echo "$mrs" | jq -r '.[0].updated_at' 2>/dev/null)
-                    mr_url=$(echo "$mrs" | jq -r '.[0].web_url' 2>/dev/null)
-                    mr_iid=$(echo "$mrs" | jq -r '.[0].iid' 2>/dev/null)
-                    
-                    # Approval info
-                    mr_upvotes=$(echo "$mrs" | jq -r '.[0].upvotes' 2>/dev/null)
-                    mr_downvotes=$(echo "$mrs" | jq -r '.[0].downvotes' 2>/dev/null)
-                    mr_approvals=$(echo "$mrs" | jq -r '.[0].user_notes_count' 2>/dev/null)
-                    
-                    # Target branch
-                    mr_target=$(echo "$mrs" | jq -r '.[0].target_branch' 2>/dev/null)
-                    
-                    if [ "$mr_title" != "null" ] && [ -n "$mr_title" ]; then
-                        # Truncate if too long
-                        if [ ${#mr_title} -gt 60 ]; then
-                            mr_title="${mr_title:0:60}..."
-                        fi
-                        echo -e "    ${C_CYAN}Title:${C_RESET} !$mr_iid - $mr_title"
-                    fi
-                    
-                    if [ "$mr_target" != "null" ] && [ -n "$mr_target" ]; then
-                        echo -e "    ${C_CYAN}Target:${C_RESET} $mr_target"
-                    fi
-                    
-                    if [ "$mr_author" != "null" ] && [ -n "$mr_author" ]; then
-                        echo -e "    ${C_CYAN}Created by:${C_RESET} $mr_author"
-                    fi
-                    
-                    if [ "$mr_created" != "null" ] && [ -n "$mr_created" ]; then
-                        created_ts=$(date -d "$mr_created" +%s 2>/dev/null || echo "")
-                        if [ -n "$created_ts" ]; then
-                            now_ts=$(date +%s)
-                            diff_sec=$((now_ts - created_ts))
-                            
-                            if [ $diff_sec -lt 3600 ]; then
-                                rel_time="$((diff_sec / 60)) minutes ago"
-                            elif [ $diff_sec -lt 86400 ]; then
-                                rel_time="$((diff_sec / 3600)) hours ago"
-                            else
-                                rel_time="$((diff_sec / 86400)) days ago"
-                            fi
-                            
-                            echo -e "    ${C_CYAN}Opened:${C_RESET} $rel_time"
-                        fi
-                    fi
-                    
-                    if [ "$mr_updated" != "null" ] && [ -n "$mr_updated" ] && [ "$mr_updated" != "$mr_created" ]; then
-                        updated_ts=$(date -d "$mr_updated" +%s 2>/dev/null || echo "")
-                        if [ -n "$updated_ts" ]; then
-                            now_ts=$(date +%s)
-                            diff_sec=$((now_ts - updated_ts))
-                            
-                            if [ $diff_sec -lt 3600 ]; then
-                                rel_time="$((diff_sec / 60)) minutes ago"
-                            elif [ $diff_sec -lt 86400 ]; then
-                                rel_time="$((diff_sec / 3600)) hours ago"
-                            else
-                                rel_time="$((diff_sec / 86400)) days ago"
-                            fi
-                            
-                            echo -e "    ${C_CYAN}Updated:${C_RESET} $rel_time"
-                        fi
-                    fi
-                    
-                    # Show approval status
-                    if [ "$mr_upvotes" != "null" ] && [ "$mr_upvotes" -gt 0 ]; then
-                        echo -e "    ${C_GREEN}Approvals:${C_RESET} 👍 $mr_upvotes"
-                    fi
-                    
-                    if [ "$mr_downvotes" != "null" ] && [ "$mr_downvotes" -gt 0 ]; then
-                        echo -e "    ${C_RED}Rejections:${C_RESET} 👎 $mr_downvotes"
-                    fi
-                    
-                    if [ "$mr_url" != "null" ] && [ -n "$mr_url" ]; then
-                        echo -e "    ${C_CYAN}View MR:${C_RESET} $mr_url"
-                    fi
-                    
-                    if [ "$mr_count" -gt 1 ]; then
-                        echo -e "    ${C_DIM}... and $((mr_count - 1)) more MR(s)${C_RESET}"
-                    fi
-                fi
-            fi
-        else
-            echo -e "  ${C_YELLOW}⚠ Could not fetch pipeline status${C_RESET}"
-            echo -e "  ${C_DIM}Possible reasons:${C_RESET}"
-            echo -e "  ${C_DIM}- Branch not pushed${C_RESET}"
-            echo -e "  ${C_DIM}- No GitLab CI configured${C_RESET}"
-            echo -e "  ${C_DIM}- API rate limit${C_RESET}"
-            echo -e "  ${C_DIM}- Token lacks permissions${C_RESET}"
-            echo -e "  ${C_DIM}- jq not installed${C_RESET}"
-        fi
-    fi
-    
-    echo
-    exit 0
-fi
-
-# =========================================================
-# HELPER FUNCTIONS
-# =========================================================
-
-# Helper function for formatting duration
+# Format seconds into compact human-readable duration
 format_duration() {
-    local seconds=$1
-    if [ $seconds -lt 60 ]; then
+    local seconds="${1:-0}"
+    seconds="${seconds%%.*}"
+    if ! [[ "$seconds" =~ ^[0-9]+$ ]]; then
+        echo "-"
+        return
+    fi
+    if [ "$seconds" -lt 60 ]; then
         echo "${seconds}s"
-    elif [ $seconds -lt 3600 ]; then
+    elif [ "$seconds" -lt 3600 ]; then
         echo "$((seconds / 60))m $((seconds % 60))s"
     else
         echo "$((seconds / 3600))h $(((seconds % 3600) / 60))m"
     fi
 }
 
-# Helper function for formatting time ago
-format_time_ago() {
-    local then=$1
-    local now=$(date +%s)
-    local diff=$((now - then))
-    
-    if [ $diff -lt 60 ]; then
-        echo "$diff seconds"
-    elif [ $diff -lt 3600 ]; then
-        echo "$((diff / 60)) minutes"
-    elif [ $diff -lt 86400 ]; then
-        echo "$((diff / 3600)) hours"
+# ------------------------------------------------------------------------------
+# 📊 DATA ENGINE (One-Pass, High-Performance Ref Scanner)
+# ------------------------------------------------------------------------------
+
+declare -a ROWS_ID ROWS_BRANCH_TEXT ROWS_BRANCH_REF ROWS_HASH ROWS_DATE ROWS_AUTHOR ROWS_AGE_RAW ROWS_MESSAGE ROWS_AHEAD ROWS_BEHIND ROWS_TYPE
+
+load_records() {
+    check_git_repo
+    get_repo_info
+
+    # Reset data arrays
+    ROWS_ID=()
+    ROWS_BRANCH_TEXT=()
+    ROWS_BRANCH_REF=()
+    ROWS_HASH=()
+    ROWS_DATE=()
+    ROWS_AUTHOR=()
+    ROWS_AGE_RAW=()
+    ROWS_MESSAGE=()
+    ROWS_AHEAD=()
+    ROWS_BEHIND=()
+    ROWS_TYPE=()
+
+    count=0
+    local term_cols
+    term_cols=$(tput cols 2>/dev/null || echo 100)
+    [ "$term_cols" -lt 60 ] && term_cols=60
+
+    # Initial column widths
+    W_ID=4
+    W_TYPE=6
+    W_BRANCH=15
+    W_STATUS=5
+    W_HASH=8
+    W_DATE=13
+    W_AUTHOR=12
+
+    if [ "$MODE" = "HISTORY" ]; then
+        # History Mode (Direct commit logs)
+        while IFS='|' read -r hash shorthash date author ts msg; do
+            [ -z "$hash" ] && continue
+            count=$((count + 1))
+            ROWS_ID[$count]="$count"
+            ROWS_TYPE[$count]="COMMIT"
+            ROWS_BRANCH_TEXT[$count]="$msg"
+            ROWS_BRANCH_REF[$count]="commit/$hash"
+            ROWS_HASH[$count]="$shorthash"
+            ROWS_DATE[$count]="$date"
+            ROWS_AUTHOR[$count]="$author"
+            ROWS_AGE_RAW[$count]="$ts"
+            ROWS_MESSAGE[$count]="$msg"
+            ROWS_AHEAD[$count]="-"
+            ROWS_BEHIND[$count]="-"
+
+            [ "${#count}" -gt "$W_ID" ] && W_ID=${#count}
+            [ "${#msg}" -gt "$W_BRANCH" ] && W_BRANCH=${#msg}
+            [ "${#shorthash}" -gt "$W_HASH" ] && W_HASH=${#shorthash}
+            [ "${#date}" -gt "$W_DATE" ] && W_DATE=${#date}
+            [ "${#author}" -gt "$W_AUTHOR" ] && W_AUTHOR=${#author}
+
+            [ "$LIMIT" -gt 0 ] && [ "$count" -ge "$LIMIT" ] && break
+        done < <(git log --format='%H|%h|%cr|%an|%ct|%s' -n "${LIMIT:-50}" 2>/dev/null)
+
+    elif [ "$MODE" = "CODE_SEARCH" ]; then
+        # Code search mode across branches
+        echo -e "  ${C_CYAN}${ICON_SEARCH} Searching branch commits for '${C_BOLD}$FILTER_CODE${C_RESET}${C_CYAN}'...${C_RESET}\n"
+        local matched_refs=()
+        while IFS= read -r ref; do
+            [ -z "$ref" ] && continue
+            if git grep -q -I "$FILTER_CODE" "$ref" 2>/dev/null; then
+                matched_refs+=("$ref")
+                [ "$LIMIT" -gt 0 ] && [ "${#matched_refs[@]}" -ge "$LIMIT" ] && break
+            fi
+        done < <(git for-each-ref --format='%(refname)' refs/heads refs/remotes 2>/dev/null | grep -v "/HEAD$")
+
+        if [ "${#matched_refs[@]}" -eq 0 ]; then
+            render_error_box "No matches found" "No branches contain text: '$FILTER_CODE'" "git-record -S \"function_name\""
+        fi
+
+        for fullref in "${matched_refs[@]}"; do
+            local short_branch="${fullref#refs/heads/}"
+            short_branch="${short_branch#refs/remotes/}"
+            local btype="LOCAL"
+            [[ "$fullref" == refs/remotes/* ]] && btype="REMOTE"
+
+            IFS='|' read -r hash shorthash date author ts msg < <(git show -s --format='%H|%h|%cr|%an|%ct|%s' "$fullref" 2>/dev/null)
+            count=$((count + 1))
+            ROWS_ID[$count]="$count"
+            ROWS_TYPE[$count]="$btype"
+            ROWS_BRANCH_TEXT[$count]="$short_branch"
+            ROWS_BRANCH_REF[$count]="$fullref"
+            ROWS_HASH[$count]="$shorthash"
+            ROWS_DATE[$count]="$date"
+            ROWS_AUTHOR[$count]="$author"
+            ROWS_AGE_RAW[$count]="$ts"
+            ROWS_MESSAGE[$count]="$msg"
+            ROWS_AHEAD[$count]="-"
+            ROWS_BEHIND[$count]="-"
+
+            [ "${#count}" -gt "$W_ID" ] && W_ID=${#count}
+            [ "${#short_branch}" -gt "$W_BRANCH" ] && W_BRANCH=${#short_branch}
+            [ "${#shorthash}" -gt "$W_HASH" ] && W_HASH=${#shorthash}
+            [ "${#date}" -gt "$W_DATE" ] && W_DATE=${#date}
+            [ "${#author}" -gt "$W_AUTHOR" ] && W_AUTHOR=${#author}
+        done
+
     else
-        echo "$((diff / 86400)) days"
+        # Standard Branch Mode (Local & Remote with Ahead/Behind Tracking)
+        local ref_patterns=()
+        if [ "$ONLY_LOCAL" -eq 1 ]; then
+            ref_patterns=("refs/heads")
+        elif [ "$ONLY_REMOTE" -eq 1 ]; then
+            ref_patterns=("refs/remotes")
+        else
+            ref_patterns=("refs/heads" "refs/remotes")
+        fi
+
+        while IFS='|' read -r fullref short_branch shorthash date author ts msg upstream track; do
+            [ -z "$fullref" ] && continue
+            [[ "$fullref" == */HEAD ]] && continue
+
+            # Apply name/author/message filter if requested
+            if [ -n "$FILTER_NAME" ]; then
+                local search_haystack="$short_branch $author $msg"
+                if [[ ! "$search_haystack" =~ $FILTER_NAME ]]; then
+                    continue
+                fi
+            fi
+
+            local btype="LOCAL"
+            if [[ "$fullref" == refs/remotes/* ]]; then
+                btype="REMOTE"
+            fi
+
+            # Calculate push/pull ahead/behind status
+            local ahead_count=0
+            local behind_count=0
+            if [ -n "$upstream" ]; then
+                if [[ "$track" =~ ahead\ ([0-9]+) ]]; then
+                    ahead_count="${BASH_REMATCH[1]}"
+                fi
+                if [[ "$track" =~ behind\ ([0-9]+) ]]; then
+                    behind_count="${BASH_REMATCH[1]}"
+                fi
+            fi
+
+            count=$((count + 1))
+            ROWS_ID[$count]="$count"
+            ROWS_TYPE[$count]="$btype"
+            ROWS_BRANCH_TEXT[$count]="$short_branch"
+            ROWS_BRANCH_REF[$count]="$fullref"
+            ROWS_HASH[$count]="$shorthash"
+            ROWS_DATE[$count]="$date"
+            ROWS_AUTHOR[$count]="$author"
+            ROWS_AGE_RAW[$count]="$ts"
+            ROWS_MESSAGE[$count]="$msg"
+            ROWS_AHEAD[$count]="ahead_count"
+            ROWS_AHEAD[$count]="$ahead_count"
+            ROWS_BEHIND[$count]="$behind_count"
+
+            [ "${#count}" -gt "$W_ID" ] && W_ID=${#count}
+            [ "${#short_branch}" -gt "$W_BRANCH" ] && W_BRANCH=${#short_branch}
+            [ "${#shorthash}" -gt "$W_HASH" ] && W_HASH=${#shorthash}
+            [ "${#date}" -gt "$W_DATE" ] && W_DATE=${#date}
+            [ "${#author}" -gt "$W_AUTHOR" ] && W_AUTHOR=${#author}
+
+            [ "$LIMIT" -gt 0 ] && [ "$count" -ge "$LIMIT" ] && break
+        done < <(git for-each-ref --sort=-committerdate --format='%(refname)|%(refname:short)|%(objectname:short)|%(committerdate:relative)|%(authorname)|%(committerdate:unix)|%(subject)|%(upstream)|%(upstream:track)' "${ref_patterns[@]}" 2>/dev/null)
+    fi
+
+    TOTAL_VISIBLE=$count
+
+    # Max bound adjustments
+    [ "$W_BRANCH" -gt 45 ] && W_BRANCH=45
+    [ "$W_AUTHOR" -gt 20 ] && W_AUTHOR=20
+    [ "$W_DATE" -gt 18 ] && W_DATE=18
+
+    # Pad column widths for spacing
+    W_ID=$((W_ID + 2))
+    W_TYPE=$((W_TYPE + 2))
+    W_BRANCH=$((W_BRANCH + 3))
+    W_STATUS=$((W_STATUS + 2))
+    W_HASH=$((W_HASH + 2))
+    W_DATE=$((W_DATE + 2))
+    W_AUTHOR=$((W_AUTHOR + 2))
+}
+
+# ------------------------------------------------------------------------------
+# 🖥️ TABLE RENDERING ENGINE (Responsive, Auto-Fit & Beautiful Borders)
+# ------------------------------------------------------------------------------
+
+render_table() {
+    if [ "$TOTAL_VISIBLE" -eq 0 ]; then
+        echo
+        print_warn "No branches or records matched your criteria."
+        echo
+        return
+    fi
+
+    local now_ts
+    now_ts=$(date +%s)
+    local stale_sec=$((STALE_DAYS * 86400))
+
+    # Header Card
+    echo
+    printf "  %b%s %b%s%b   %s %b%s%b   %s %s\n" \
+        "$C_BOLD$C_REPO" "$ICON_REPO" "$C_WHITE" "${REPO_NAME^^}" "$C_RESET" \
+        "$ICON_BRANCH" "$C_CURRENT$C_BOLD" "$CUR_BRANCH" "$C_RESET" \
+        "$STATUS_BADGE" "$([ "$STASH_COUNT" -gt 0 ] && echo "${C_DIM}• $ICON_STASH $STASH_COUNT stashed${C_RESET}")"
+
+    printf "  %bLocal: %s   Remote: %s   Total Shown: %s/%s%b\n" \
+        "$C_DIM" "$COUNT_LOCAL" "$COUNT_REMOTE" "$TOTAL_VISIBLE" "$((COUNT_LOCAL + COUNT_REMOTE))" "$C_RESET"
+    echo
+
+    # Top border
+    printf "  %b%s" "$C_BORDER" "$BOX_TL"
+    repeat_char "$BOX_H" $W_ID; printf "%s" "$BOX_TJ"
+    repeat_char "$BOX_H" $W_TYPE; printf "%s" "$BOX_TJ"
+    repeat_char "$BOX_H" $W_BRANCH; printf "%s" "$BOX_TJ"
+    repeat_char "$BOX_H" $W_STATUS; printf "%s" "$BOX_TJ"
+    repeat_char "$BOX_H" $W_HASH; printf "%s" "$BOX_TJ"
+    repeat_char "$BOX_H" $W_DATE; printf "%s" "$BOX_TJ"
+    repeat_char "$BOX_H" $W_AUTHOR; printf "%s%b\n" "$BOX_TR" "$C_RESET"
+
+    # Column Headers
+    local branch_header_title="BRANCH NAME"
+    [ "$MODE" = "HISTORY" ] && branch_header_title="COMMIT MESSAGE"
+
+    printf "  %b%s" "$C_BORDER" "$BOX_V"
+    print_cell " NO " "$W_ID" "$C_HEADER$C_BOLD" "center"; printf "%b%s" "$C_BORDER" "$BOX_V"
+    print_cell " TYPE " "$W_TYPE" "$C_HEADER$C_BOLD" "center"; printf "%b%s" "$C_BORDER" "$BOX_V"
+    print_cell " $branch_header_title " "$W_BRANCH" "$C_HEADER$C_BOLD" "left"; printf "%b%s" "$C_BORDER" "$BOX_V"
+    print_cell " SYNC " "$W_STATUS" "$C_HEADER$C_BOLD" "center"; printf "%b%s" "$C_BORDER" "$BOX_V"
+    print_cell " COMMIT " "$W_HASH" "$C_HEADER$C_BOLD" "center"; printf "%b%s" "$C_BORDER" "$BOX_V"
+    print_cell " LAST UPDATED " "$W_DATE" "$C_HEADER$C_BOLD" "left"; printf "%b%s" "$C_BORDER" "$BOX_V"
+    print_cell " AUTHOR " "$W_AUTHOR" "$C_HEADER$C_BOLD" "left"; printf "%b%s%b\n" "$C_BORDER" "$BOX_V" "$C_RESET"
+
+    # Header Separator
+    printf "  %b%s" "$C_BORDER" "$BOX_LJ"
+    repeat_char "$BOX_H" $W_ID; printf "%s" "$BOX_X"
+    repeat_char "$BOX_H" $W_TYPE; printf "%s" "$BOX_X"
+    repeat_char "$BOX_H" $W_BRANCH; printf "%s" "$BOX_X"
+    repeat_char "$BOX_H" $W_STATUS; printf "%s" "$BOX_X"
+    repeat_char "$BOX_H" $W_HASH; printf "%s" "$BOX_X"
+    repeat_char "$BOX_H" $W_DATE; printf "%s" "$BOX_X"
+    repeat_char "$BOX_H" $W_AUTHOR; printf "%s%b\n" "$BOX_RJ" "$C_RESET"
+
+    # Data Rows
+    for ((i=1; i<=TOTAL_VISIBLE; i++)); do
+        local id="${ROWS_ID[$i]}"
+        local btype="${ROWS_TYPE[$i]}"
+        local btext="${ROWS_BRANCH_TEXT[$i]}"
+        local bref="${ROWS_BRANCH_REF[$i]}"
+        local bhash="${ROWS_HASH[$i]}"
+        local bdate="${ROWS_DATE[$i]}"
+        local bauthor="${ROWS_AUTHOR[$i]}"
+        local bts="${ROWS_AGE_RAW[$i]}"
+        local ahead="${ROWS_AHEAD[$i]}"
+        local behind="${ROWS_BEHIND[$i]}"
+
+        local is_current=0
+        if [ "$btext" = "$CUR_BRANCH" ] && [ "$MODE" != "HISTORY" ]; then
+            is_current=1
+        fi
+
+        # Sync Status formatting
+        local sync_str="-"
+        local sync_color="$C_MUTED"
+        if [ "$ahead" != "-" ] && [ "$behind" != "-" ]; then
+            if [ "$ahead" -gt 0 ] && [ "$behind" -gt 0 ]; then
+                sync_str="${ICON_AHEAD}${ahead}${ICON_BEHIND}${behind}"
+                sync_color="$C_YELLOW"
+            elif [ "$ahead" -gt 0 ]; then
+                sync_str="${ICON_AHEAD}${ahead}"
+                sync_color="$C_GREEN"
+            elif [ "$behind" -gt 0 ]; then
+                sync_str="${ICON_BEHIND}${behind}"
+                sync_color="$C_RED"
+            else
+                sync_str="${ICON_CHECK}"
+                sync_color="$C_GREEN"
+            fi
+        fi
+
+        # Row styling
+        local row_id_col="$C_DIM"
+        local row_branch_col="$C_LOCAL"
+        local row_type_col="$C_GRAY"
+        local row_hash_col="$C_CYAN"
+        local row_date_col="$C_TIME"
+        local row_author_col="$C_AUTHOR"
+
+        local branch_display="$btext"
+        if [ "$is_current" -eq 1 ]; then
+            row_id_col="$C_CURRENT$C_BOLD"
+            row_type_col="$C_CURRENT$C_BOLD"
+            row_branch_col="$C_CURRENT$C_BOLD"
+            row_hash_col="$C_CURRENT"
+            row_date_col="$C_CURRENT"
+            row_author_col="$C_CURRENT"
+            branch_display="${ICON_CURRENT} ${btext}"
+        elif [ "$btype" = "REMOTE" ]; then
+            row_type_col="$C_MUTED"
+            row_branch_col="$C_REMOTE"
+            if [[ "$btext" == origin/* ]]; then
+                branch_display="origin/${C_REMOTE_TXT}${btext#origin/}${C_REMOTE}"
+            fi
+        elif [ "$btype" = "LOCAL" ]; then
+            row_type_col="$C_CYAN"
+            if [ $((now_ts - bts)) -gt "$stale_sec" ]; then
+                row_branch_col="$C_WARN"
+                branch_display="${ICON_STALE} ${btext}"
+            fi
+        fi
+
+        # Truncate branch name to fit cell safely
+        local max_branch_chars=$((W_BRANCH - 2))
+        local clean_branch_len
+        clean_branch_len=$(str_len "$branch_display")
+        if [ "$clean_branch_len" -gt "$max_branch_chars" ]; then
+            branch_display=$(truncate_str "$branch_display" "$max_branch_chars")
+        fi
+
+        # Print row
+        printf "  %b%s" "$C_BORDER" "$BOX_V"
+        print_cell " $id " "$W_ID" "$row_id_col" "center"; printf "%b%s" "$C_BORDER" "$BOX_V"
+        print_cell " $btype " "$W_TYPE" "$row_type_col" "center"; printf "%b%s" "$C_BORDER" "$BOX_V"
+        print_cell " $branch_display " "$W_BRANCH" "$row_branch_col" "left"; printf "%b%s" "$C_BORDER" "$BOX_V"
+        print_cell " $sync_str " "$W_STATUS" "$sync_color" "center"; printf "%b%s" "$C_BORDER" "$BOX_V"
+        print_cell " $bhash " "$W_HASH" "$row_hash_col" "center"; printf "%b%s" "$C_BORDER" "$BOX_V"
+        print_cell " $bdate " "$W_DATE" "$row_date_col" "left"; printf "%b%s" "$C_BORDER" "$BOX_V"
+        print_cell " $bauthor " "$W_AUTHOR" "$row_author_col" "left"; printf "%b%s%b\n" "$C_BORDER" "$BOX_V" "$C_RESET"
+    done
+
+    # Bottom border
+    printf "  %b%s" "$C_BORDER" "$BOX_BL"
+    repeat_char "$BOX_H" $W_ID; printf "%s" "$BOX_BJ"
+    repeat_char "$BOX_H" $W_TYPE; printf "%s" "$BOX_BJ"
+    repeat_char "$BOX_H" $W_BRANCH; printf "%s" "$BOX_BJ"
+    repeat_char "$BOX_H" $W_STATUS; printf "%s" "$BOX_BJ"
+    repeat_char "$BOX_H" $W_HASH; printf "%s" "$BOX_BJ"
+    repeat_char "$BOX_H" $W_DATE; printf "%s" "$BOX_BJ"
+    repeat_char "$BOX_H" $W_AUTHOR; printf "%s%b\n" "$BOX_BR" "$C_RESET"
+}
+
+print_command_center() {
+    echo
+    printf "  %b%s QUICK WORKFLOW ACTIONS%b\n" "$C_BOLD$C_CYAN" "$ICON_ROCKET" "$C_RESET"
+    printf "  %b%-28s  %-28s  %-28s%b\n" "$C_HEADER" "🌿 WORKFLOW" "🔍 INSPECT" "📊 ANALYTICS & CI" "$C_RESET"
+    printf "  %b%-28s  %-28s  %-28s%b\n" "$C_MUTED" "git-record -c <ID>  (Checkout)" "git-record -s <ID>  (Show)" "git-record -X <ID>  (Stats)" "$C_RESET"
+    printf "  %b%-28s  %-28s  %-28s%b\n" "$C_MUTED" "git-record -m <ID>  (Merge)" "git-record -C <A:B> (Compare)" "git-record -V       (Velocity)" "$C_RESET"
+    printf "  %b%-28s  %-28s  %-28s%b\n" "$C_MUTED" "git-record -d <ID>  (Delete)" "git-record -M <ID>  (Conflicts)" "git-record -G       (Graph)" "$C_RESET"
+    printf "  %b%-28s  %-28s  %-28s%b\n" "$C_MUTED" "git-record -b <IDs> (Bulk Del)" "git-record -k <ID>  (Copy Hash)" "git-record -N <ID>  (CI Status)" "$C_RESET"
+    echo
+    printf "  %bUse %bgit-record -h%b for full manual  |  %bgit-record -i%b for interactive menu%b\n\n" \
+        "$C_DIM" "$C_CYAN" "$C_DIM" "$C_CYAN" "$C_DIM" "$C_RESET"
+}
+
+# ------------------------------------------------------------------------------
+# 🚀 CORE WORKFLOW ACTIONS (Checkout, Merge, Delete, Bulk Delete, Rename)
+# ------------------------------------------------------------------------------
+
+RESOLVED_BRANCH=""
+RESOLVED_REF=""
+RESOLVED_HASH=""
+
+resolve_branch_target() {
+    local input="$1"
+    local flag_name="${2:-target}"
+    RESOLVED_BRANCH=""
+    RESOLVED_REF=""
+    RESOLVED_HASH=""
+
+    if [[ "$input" =~ ^[0-9]+$ ]]; then
+        if [ "$input" -ge 1 ] && [ "$input" -le "$TOTAL_VISIBLE" ]; then
+            RESOLVED_BRANCH="${ROWS_BRANCH_TEXT[$input]}"
+            RESOLVED_REF="${ROWS_BRANCH_REF[$input]}"
+            RESOLVED_HASH="${ROWS_HASH[$input]}"
+            return 0
+        else
+            render_error_box "Branch ID out of range: $input" "Select an ID between 1 and $TOTAL_VISIBLE" "git-record $flag_name 1"
+        fi
+    else
+        # Match by branch name in loaded records
+        for ((i=1; i<=TOTAL_VISIBLE; i++)); do
+            if [ "${ROWS_BRANCH_TEXT[$i]}" = "$input" ]; then
+                RESOLVED_BRANCH="${ROWS_BRANCH_TEXT[$i]}"
+                RESOLVED_REF="${ROWS_BRANCH_REF[$i]}"
+                RESOLVED_HASH="${ROWS_HASH[$i]}"
+                return 0
+            fi
+        done
+
+        # If not in table, check git directly
+        if git show-ref --verify --quiet "refs/heads/$input"; then
+            RESOLVED_BRANCH="$input"
+            RESOLVED_REF="refs/heads/$input"
+            RESOLVED_HASH=$(git rev-parse --short "refs/heads/$input" 2>/dev/null)
+            return 0
+        elif git show-ref --verify --quiet "refs/remotes/origin/$input"; then
+            RESOLVED_BRANCH="origin/$input"
+            RESOLVED_REF="refs/remotes/origin/$input"
+            RESOLVED_HASH=$(git rev-parse --short "refs/remotes/origin/$input" 2>/dev/null)
+            return 0
+        fi
+    fi
+
+    render_error_box "Invalid branch or ID: '$input'" "Please specify a valid numeric ID or existing branch name" "git-record -c 1"
+}
+
+action_checkout() {
+    local target="$1"
+    resolve_branch_target "$target" "-c"
+    local branch="$RESOLVED_BRANCH"
+    local ref="$RESOLVED_REF"
+
+    if [ "$branch" = "$CUR_BRANCH" ]; then
+        print_info "Already on branch '${C_BOLD}$branch${C_RESET}'"
+        return 0
+    fi
+
+    if [[ "$ref" == refs/heads/* ]]; then
+        if git checkout "$branch"; then
+            print_success "Switched to branch '${C_BOLD}$branch${C_RESET}'"
+        fi
+    else
+        # Remote branch checkout
+        local local_name="${branch#origin/}"
+        local_name="${local_name#upstream/}"
+
+        if git show-ref --verify --quiet "refs/heads/$local_name"; then
+            if git checkout "$local_name"; then
+                print_success "Switched to existing local branch '${C_BOLD}$local_name${C_RESET}'"
+            fi
+        else
+            if git checkout -b "$local_name" --track "$branch" 2>/dev/null || git checkout "$local_name" 2>/dev/null; then
+                print_success "Created and switched to branch '${C_BOLD}$local_name${C_RESET}' tracking '${C_DIM}$branch${C_RESET}'"
+            else
+                render_error_box "Failed to checkout remote branch" "Check for working tree conflicts or uncommitted changes" "git status"
+            fi
+        fi
     fi
 }
 
-# =========================================================
-# REAL-TIME CI/CD MONITORING
-# =========================================================
+action_delete() {
+    local target="$1"
+    local force="${2:-0}"
+    resolve_branch_target "$target" "-d"
+    local branch="$RESOLVED_BRANCH"
+    local ref="$RESOLVED_REF"
 
-if [ -n "$ACT_REALTIME_CI" ]; then
-    branch="${ROWS_BRANCH_TEXT[$ACT_REALTIME_CI]}"
-    
-    if [ -z "$branch" ]; then
-        echo -e "\n  ${C_RED}✖ Invalid branch ID: $ACT_REALTIME_CI${C_RESET}"
-        echo -e "  ${C_DIM}Available IDs: 1-$TOTAL_VISIBLE${C_RESET}\n"
-        exit 1
+    if [[ "$ref" != refs/heads/* ]]; then
+        render_error_box "Cannot delete remote branch with this flag" "To delete on remote: git push origin --delete ${branch#origin/}" "git-record -d <local_id>"
     fi
-    
-    # Parse optional refresh interval (default: 5 seconds)
-    REFRESH_INTERVAL=5
-    if [ -n "${EXTRA_ARGS[0]}" ]; then
-        if [[ "${EXTRA_ARGS[0]}" =~ ^[0-9]+$ ]]; then
-            REFRESH_INTERVAL="${EXTRA_ARGS[0]}"
-            # Validate range (1-60 seconds)
-            if [ "$REFRESH_INTERVAL" -lt 1 ]; then
-                REFRESH_INTERVAL=1
-                echo -e "${C_YELLOW}⚠ Minimum refresh interval is 1s${C_RESET}"
-                sleep 1
-            elif [ "$REFRESH_INTERVAL" -gt $MAX_INTERVAL ]; then
-                REFRESH_INTERVAL=$MAX_INTERVAL
-                echo -e "${C_YELLOW}⚠ Maximum refresh interval is ${MAX_INTERVAL}s${C_RESET}"
-                sleep 1
-            fi
-        else
-            echo -e "${C_YELLOW}⚠ Invalid interval '${EXTRA_ARGS[0]}', using default 5s${C_RESET}"
-            sleep 1
+
+    if [ "$branch" = "$CUR_BRANCH" ]; then
+        render_error_box "Cannot delete the currently active branch: '$branch'" "Switch to another branch first" "git-record -c main"
+    fi
+
+    # Protected branch check
+    if [[ "$branch" =~ ^(master|main|develop|staging|production|release) ]]; then
+        print_warn "Branch '${C_BOLD}$branch${C_RESET}' is a protected branch!"
+        printf "  %bAre you absolutely sure you want to delete it? (yes/no): %b" "$C_YELLOW$C_BOLD" "$C_RESET"
+        read -r confirm
+        if [ "$confirm" != "yes" ]; then
+            print_info "Deletion cancelled."
+            return 0
         fi
     fi
-    
-    # Remove remote prefix for API calls
-    clean_branch=$(echo "$branch" | sed 's|^origin/||' | sed 's|^upstream/||')
-    
-    platform=$(detect_remote_platform)
-    
-    if [ -z "$platform" ]; then
-        echo -e "\n  ${C_YELLOW}⚠ Could not detect Git platform${C_RESET}"
-        echo -e "  ${C_DIM}Supported: GitHub, GitLab (including self-hosted)${C_RESET}\n"
-        exit 1
-    fi
-    
-    # Get repository info
-    if [ "$platform" == "github" ]; then
-        repo=$(parse_github_repo)
+
+    local del_flag="-d"
+    [ "$force" -eq 1 ] && del_flag="-D"
+
+    if git branch "$del_flag" "$branch" 2>/dev/null; then
+        print_success "Deleted branch '${C_BOLD}$branch${C_RESET}'"
     else
-        repo=$(parse_gitlab_repo)
-    fi
-    
-    # Initial clear and header setup
-    clear
-    
-    # Trap Ctrl+C for clean exit
-    trap 'clear; echo -e "\n${C_YELLOW}⊗ Monitoring stopped${C_RESET}\n"; exit 0' INT
-    
-    # Initialize tracking variables
-    last_status=""
-    last_pipeline_id=""
-    iteration=0
-    start_time=$(date +%s)
-    
-    # Main monitoring loop
-    while true; do
-        iteration=$((iteration + 1))
-        current_time=$(date '+%H:%M:%S')
-        elapsed=$(($(date +%s) - start_time))
-        
-        # Clear screen completely for each update to prevent content mixup
-        clear
-        
-        # Premium header
-        echo -e "${C_BOLD}${C_CYAN}╔════════════════════════════════════════════════════════════════╗${C_RESET}"
-        echo -e "${C_BOLD}${C_CYAN}║                                                                ║${C_RESET}"
-        echo -e "${C_BOLD}${C_CYAN}║${C_RESET}        ${C_RED}●${C_RESET} ${C_BOLD}LIVE CI/CD MONITORING${C_RESET}  ${C_DIM}Press Ctrl+C to exit${C_RESET}      ${C_BOLD}${C_CYAN}║${C_RESET}"
-        echo -e "${C_BOLD}${C_CYAN}║                                                                ║${C_RESET}"
-        echo -e "${C_BOLD}${C_CYAN}╚════════════════════════════════════════════════════════════════╝${C_RESET}\n"
-        
-        # Info bar
-        platform_icon=$([ "$platform" == "github" ] && echo "🐙" || echo "🦊")
-        platform_name=$([ "$platform" == "github" ] && echo "GitHub" || echo "GitLab")
-        
-        echo -e "  ${C_HEADER}┌─ Configuration${C_RESET}"
-        echo -e "  ${C_HEADER}│${C_RESET}"
-        echo -e "  ${C_HEADER}├─${C_RESET} ${C_CYAN}Branch:${C_RESET}   ${C_BOLD}$branch${C_RESET}"
-        echo -e "  ${C_HEADER}├─${C_RESET} ${C_CYAN}Platform:${C_RESET} $platform_icon ${C_BOLD}$platform_name${C_RESET}"
-        
-        if [ "$platform" == "gitlab" ]; then
-            gitlab_domain=$(get_gitlab_domain)
-            echo -e "  ${C_HEADER}├─${C_RESET} ${C_CYAN}Server:${C_RESET}   ${C_BOLD}$gitlab_domain${C_RESET}"
-        fi
-        
-        echo -e "  ${C_HEADER}├─${C_RESET} ${C_CYAN}Refresh:${C_RESET}  ${C_BOLD}Every ${REFRESH_INTERVAL}s${C_RESET}"
-        echo -e "  ${C_HEADER}└─${C_RESET}\n"
-        
-        echo -e "${C_BOLD}${C_DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RESET}\n"
-        
-        # Update header
-        echo -e "  ${C_BOLD}${C_HEADER}╭─ Update #$iteration${C_RESET} ${C_DIM}│${C_RESET} ${C_CYAN}$current_time${C_RESET} ${C_DIM}│${C_RESET} ${C_DIM}Runtime: $(format_duration $elapsed)${C_RESET}"
-        echo -e "  ${C_HEADER}│${C_RESET}"
-        
-        # Fetch and display status based on platform
-        if [ "$platform" == "github" ]; then
-            # GitHub monitoring
-            workflows=$(fetch_github_workflows "$repo" "$clean_branch")
-            
-            if [ -n "$workflows" ] && [ "$workflows" != "null" ]; then
-                run_count=$(echo "$workflows" | jq '.total_count' 2>/dev/null)
-                
-                if [ "$run_count" -gt 0 ]; then
-                    run_id=$(echo "$workflows" | jq -r '.workflow_runs[0].id' 2>/dev/null)
-                    run_name=$(echo "$workflows" | jq -r '.workflow_runs[0].name' 2>/dev/null)
-                    run_status=$(echo "$workflows" | jq -r '.workflow_runs[0].status' 2>/dev/null)
-                    run_conclusion=$(echo "$workflows" | jq -r '.workflow_runs[0].conclusion' 2>/dev/null)
-                    run_number=$(echo "$workflows" | jq -r '.workflow_runs[0].run_number' 2>/dev/null)
-                    run_created=$(echo "$workflows" | jq -r '.workflow_runs[0].created_at' 2>/dev/null)
-                    run_updated=$(echo "$workflows" | jq -r '.workflow_runs[0].updated_at' 2>/dev/null)
-                    
-                    # Detect status change
-                    current_status="${run_status}-${run_conclusion}"
-                    if [ "$current_status" != "$last_status" ] && [ -n "$last_status" ]; then
-                        echo -e "  ${C_HEADER}├─${C_RESET} ${C_YELLOW}⚡ STATUS CHANGED${C_RESET} ${C_DIM}${last_status}${C_RESET} → ${C_BOLD}${current_status}${C_RESET}"
-                        echo -e "  ${C_HEADER}│${C_RESET}"
-                    fi
-                    last_status="$current_status"
-                    
-                    # Status badge with animation
-                    if [ "$run_status" == "completed" ]; then
-                        case "$run_conclusion" in
-                            success) echo -e "  ${C_HEADER}├─${C_RESET} ${C_GREEN}●●●●●●●●●●${C_RESET} ${C_BOLD}${C_GREEN}PASSED${C_RESET} ✓" ;;
-                            failure) echo -e "  ${C_HEADER}├─${C_RESET} ${C_RED}●●●●●●●●●●${C_RESET} ${C_BOLD}${C_RED}FAILED${C_RESET} ✗" ;;
-                            cancelled) echo -e "  ${C_HEADER}├─${C_RESET} ${C_YELLOW}○○○○○○○○○○${C_RESET} ${C_BOLD}${C_YELLOW}CANCELLED${C_RESET} ⊗" ;;
-                            *) echo -e "  ${C_HEADER}├─${C_RESET} ${C_DIM}○○○○○○○○○○${C_RESET} ${C_BOLD}${run_conclusion^^}${C_RESET}" ;;
-                        esac
-                    elif [ "$run_status" == "in_progress" ]; then
-                        # Animated progress
-                        progress_pos=$((iteration % 10))
-                        progress_bar=""
-                        for i in {0..9}; do
-                            [ $i -eq $progress_pos ] && progress_bar="${progress_bar}${C_YELLOW}●${C_RESET}" || progress_bar="${progress_bar}${C_DIM}○${C_RESET}"
-                        done
-                        echo -e "  ${C_HEADER}├─${C_RESET} ${progress_bar} ${C_BOLD}${C_YELLOW}RUNNING${C_RESET} ⏳"
-                    elif [ "$run_status" == "queued" ]; then
-                        echo -e "  ${C_HEADER}├─${C_RESET} ${C_CYAN}○○○○○○○○○○${C_RESET} ${C_BOLD}${C_CYAN}QUEUED${C_RESET} ○"
-                    fi
-                    
-                    echo -e "  ${C_HEADER}├─${C_RESET} ${C_DIM}Workflow: ${C_RESET}${run_name}  ${C_DIM}│${C_RESET}  ${C_DIM}Run: ${C_RESET}#$run_number  ${C_DIM}│${C_RESET}  ${C_DIM}ID: ${C_RESET}$run_id"
-                    echo -e "  ${C_HEADER}│${C_RESET}"
-                    
-                    # Timeline
-                    if [ "$run_created" != "null" ] && [ -n "$run_created" ]; then
-                        created_ts=$(date -d "$run_created" +%s 2>/dev/null || echo "")
-                        now_ts=$(date +%s)
-                        
-                        if [ -n "$created_ts" ] && [ "$run_updated" != "null" ] && [ -n "$run_updated" ]; then
-                            updated_ts=$(date -d "$run_updated" +%s 2>/dev/null || echo "")
-                            if [ -n "$updated_ts" ]; then
-                                duration=$((updated_ts - created_ts))
-                                elapsed_since_start=$((now_ts - created_ts))
-                                
-                                if [ "$run_status" == "in_progress" ]; then
-                                    echo -e "  ${C_HEADER}├─${C_RESET} ${C_CYAN}Duration:${C_RESET} ${C_BOLD}$(format_duration $elapsed_since_start)${C_RESET} ${C_DIM}(running)${C_RESET}"
-                                else
-                                    echo -e "  ${C_HEADER}├─${C_RESET} ${C_CYAN}Duration:${C_RESET} ${C_BOLD}$(format_duration $duration)${C_RESET}"
-                                    echo -e "  ${C_HEADER}├─${C_RESET} ${C_CYAN}Finished:${C_RESET} ${C_DIM}$(format_time_ago $updated_ts) ago${C_RESET}"
-                                fi
-                            fi
-                        fi
-                    fi
-                    
-                    # Jobs
-                    jobs=$(fetch_github_workflow_jobs "$repo" "$run_id")
-                    if [ -n "$jobs" ]; then
-                        job_count=$(echo "$jobs" | jq '.total_count' 2>/dev/null)
-                        
-                        if [ "$job_count" -gt 0 ]; then
-                            echo -e "  ${C_HEADER}│${C_RESET}"
-                            echo -e "  ${C_HEADER}├─${C_RESET} ${C_BOLD}Jobs Summary${C_RESET} ${C_DIM}($job_count total)${C_RESET}"
-                            
-                            success=$(echo "$jobs" | jq '[.jobs[] | select(.conclusion=="success")] | length' 2>/dev/null)
-                            failed=$(echo "$jobs" | jq '[.jobs[] | select(.conclusion=="failure")] | length' 2>/dev/null)
-                            running=$(echo "$jobs" | jq '[.jobs[] | select(.status=="in_progress")] | length' 2>/dev/null)
-                            queued=$(echo "$jobs" | jq '[.jobs[] | select(.status=="queued")] | length' 2>/dev/null)
-                            
-                            echo -e "  ${C_HEADER}├─${C_RESET} ${C_GREEN}✓ $success${C_RESET}  ${C_RED}✗ $failed${C_RESET}  ${C_YELLOW}⏳ $running${C_RESET}  ${C_CYAN}○ $queued${C_RESET}"
-                            echo -e "  ${C_HEADER}│${C_RESET}"
-                            
-                            # Show jobs (max 15 to prevent screen overflow)
-                            local job_num=0
-                            echo "$jobs" | jq -r '.jobs[] | "\(.name)|\(.status)|\(.conclusion)|\(.started_at)|\(.completed_at)"' 2>/dev/null | head -15 | while IFS='|' read -r name status conclusion started completed; do
-                                job_num=$((job_num + 1))
-                                
-                                case "$status" in
-                                    completed)
-                                        case "$conclusion" in
-                                            success) icon="${C_GREEN}✓${C_RESET}" ;;
-                                            failure) icon="${C_RED}✗${C_RESET}" ;;
-                                            *) icon="${C_DIM}?${C_RESET}" ;;
-                                        esac
-                                        ;;
-                                    in_progress) icon="${C_YELLOW}⏳${C_RESET}" ;;
-                                    *) icon="${C_CYAN}○${C_RESET}" ;;
-                                esac
-                                
-                                # Duration
-                                dur_str="-"
-                                if [ "$started" != "null" ] && [ "$completed" != "null" ]; then
-                                    start_ts=$(date -d "$started" +%s 2>/dev/null || echo "")
-                                    complete_ts=$(date -d "$completed" +%s 2>/dev/null || echo "")
-                                    if [ -n "$start_ts" ] && [ -n "$complete_ts" ]; then
-                                        dur=$((complete_ts - start_ts))
-                                        dur_str=$(format_duration $dur)
-                                    fi
-                                elif [ "$started" != "null" ] && [ "$status" == "in_progress" ]; then
-                                    start_ts=$(date -d "$started" +%s 2>/dev/null || echo "")
-                                    if [ -n "$start_ts" ]; then
-                                        dur=$((now_ts - start_ts))
-                                        dur_str="${C_YELLOW}$(format_duration $dur)${C_RESET} ${C_DIM}...${C_RESET}"
-                                    fi
-                                fi
-                                
-                                # Truncate long names
-                                if [ ${#name} -gt 45 ]; then
-                                    name="${name:0:42}..."
-                                fi
-                                
-                                echo -e "  ${C_HEADER}├──${C_RESET} $icon  ${C_DIM}$(printf '%-45s' "$name")${C_RESET}  $dur_str"
-                            done
-                            
-                            if [ "$job_count" -gt 15 ]; then
-                                echo -e "  ${C_HEADER}├──${C_RESET} ${C_DIM}... and $((job_count - 15)) more jobs${C_RESET}"
-                            fi
-                        fi
-                    fi
-                else
-                    echo -e "  ${C_HEADER}├─${C_RESET} ${C_YELLOW}⚠ No workflows found${C_RESET}"
+        if [ "$force" -eq 0 ]; then
+            print_warn "Branch '${C_BOLD}$branch${C_RESET}' has unmerged commits."
+            printf "  %bForce delete branch anyway? (y/N): %b" "$C_YELLOW" "$C_RESET"
+            read -r confirm
+            if [[ "$confirm" =~ ^[Yy]$ ]]; then
+                if git branch -D "$branch" 2>/dev/null; then
+                    print_success "Force deleted branch '${C_BOLD}$branch${C_RESET}'"
                 fi
             else
-                echo -e "  ${C_HEADER}├─${C_RESET} ${C_YELLOW}⚠ No workflow data available${C_RESET}"
+                print_info "Deletion cancelled."
             fi
-            
         else
-            # GitLab monitoring
-            status=$(fetch_gitlab_ci_status "$repo" "$clean_branch")
-            
-            if [ -n "$status" ] && command -v jq >/dev/null 2>&1; then
-                pipeline=$(echo "$status" | jq -r '.last_pipeline.status' 2>/dev/null)
-                pipeline_id=$(echo "$status" | jq -r '.last_pipeline.id' 2>/dev/null)
-                
-                # Detect change
-                if [ "$pipeline_id" != "$last_pipeline_id" ] && [ -n "$last_pipeline_id" ]; then
-                    echo -e "  ${C_HEADER}├─${C_RESET} ${C_YELLOW}⚡ NEW PIPELINE${C_RESET} ${C_DIM}#$last_pipeline_id${C_RESET} → ${C_BOLD}#$pipeline_id${C_RESET}"
-                    echo -e "  ${C_HEADER}│${C_RESET}"
-                fi
-                last_pipeline_id="$pipeline_id"
-                
-                # Status badge
-                case "$pipeline" in
-                    success) echo -e "  ${C_HEADER}├─${C_RESET} ${C_GREEN}●●●●●●●●●●${C_RESET} ${C_BOLD}${C_GREEN}PASSED${C_RESET} ✓" ;;
-                    running)
-                        progress_pos=$((iteration % 10))
-                        progress_bar=""
-                        for i in {0..9}; do
-                            [ $i -eq $progress_pos ] && progress_bar="${progress_bar}${C_YELLOW}●${C_RESET}" || progress_bar="${progress_bar}${C_DIM}○${C_RESET}"
-                        done
-                        echo -e "  ${C_HEADER}├─${C_RESET} ${progress_bar} ${C_BOLD}${C_YELLOW}RUNNING${C_RESET} ⏳"
-                        ;;
-                    failed) echo -e "  ${C_HEADER}├─${C_RESET} ${C_RED}●●●●●●●●●●${C_RESET} ${C_BOLD}${C_RED}FAILED${C_RESET} ✗" ;;
-                    pending) echo -e "  ${C_HEADER}├─${C_RESET} ${C_CYAN}○○○○○○○○○○${C_RESET} ${C_BOLD}${C_CYAN}PENDING${C_RESET} ○" ;;
-                    manual) echo -e "  ${C_HEADER}├─${C_RESET} ${C_BLUE}⚙⚙⚙⚙⚙⚙⚙⚙⚙⚙${C_RESET} ${C_BOLD}${C_BLUE}MANUAL${C_RESET} ⚙" ;;
-                    canceled) echo -e "  ${C_HEADER}├─${C_RESET} ${C_YELLOW}○○○○○○○○○○${C_RESET} ${C_BOLD}${C_YELLOW}CANCELED${C_RESET} ⊗" ;;
-                    skipped) echo -e "  ${C_HEADER}├─${C_RESET} ${C_DIM}⊘⊘⊘⊘⊘⊘⊘⊘⊘⊘${C_RESET} ${C_BOLD}${C_DIM}SKIPPED${C_RESET} ⊘" ;;
-                    created) echo -e "  ${C_HEADER}├─${C_RESET} ${C_CYAN}○○○○○○○○○○${C_RESET} ${C_BOLD}${C_CYAN}CREATED${C_RESET} ○" ;;
-                    *) echo -e "  ${C_HEADER}├─${C_RESET} ${C_DIM}??????????${C_RESET} ${C_BOLD}${pipeline^^}${C_RESET}" ;;
-                esac
-                
-                pipeline_iid=$(echo "$status" | jq -r '.last_pipeline.iid' 2>/dev/null)
-                echo -e "  ${C_HEADER}├─${C_RESET} ${C_DIM}Pipeline: ${C_RESET}#$pipeline_iid  ${C_DIM}│${C_RESET}  ${C_DIM}ID: ${C_RESET}$pipeline_id"
-                echo -e "  ${C_HEADER}│${C_RESET}"
-                
-                # Timeline
-                pipeline_created=$(echo "$status" | jq -r '.last_pipeline.created_at' 2>/dev/null)
-                pipeline_updated=$(echo "$status" | jq -r '.last_pipeline.updated_at' 2>/dev/null)
-                
-                if [ "$pipeline_created" != "null" ]; then
-                    created_ts=$(date -d "$pipeline_created" +%s 2>/dev/null || echo "")
-                    now_ts=$(date +%s)
-                    
-                    if [ -n "$created_ts" ] && [ "$pipeline_updated" != "null" ]; then
-                        updated_ts=$(date -d "$pipeline_updated" +%s 2>/dev/null || echo "")
-                        if [ -n "$updated_ts" ]; then
-                            duration=$((updated_ts - created_ts))
-                            elapsed=$((now_ts - created_ts))
-                            
-                            if [ "$pipeline" == "running" ]; then
-                                echo -e "  ${C_HEADER}├─${C_RESET} ${C_CYAN}Duration:${C_RESET} ${C_BOLD}$(format_duration $elapsed)${C_RESET} ${C_DIM}(running)${C_RESET}"
-                            else
-                                echo -e "  ${C_HEADER}├─${C_RESET} ${C_CYAN}Duration:${C_RESET} ${C_BOLD}$(format_duration $duration)${C_RESET}"
-                                echo -e "  ${C_HEADER}├─${C_RESET} ${C_CYAN}Finished:${C_RESET} ${C_DIM}$(format_time_ago $updated_ts) ago${C_RESET}"
-                            fi
-                        fi
-                    fi
-                fi
-                
-                # Jobs
-                if [ "$pipeline_id" != "null" ]; then
-                    jobs=$(fetch_gitlab_pipeline_details "$repo" "$pipeline_id")
-                    
-                    if [ -n "$jobs" ] && [ "$jobs" != "[]" ]; then
-                        job_count=$(echo "$jobs" | jq 'length' 2>/dev/null)
-                        
-                        if [ "$job_count" -gt 0 ]; then
-                            echo -e "  ${C_HEADER}│${C_RESET}"
-                            echo -e "  ${C_HEADER}├─${C_RESET} ${C_BOLD}Jobs Summary${C_RESET} ${C_DIM}($job_count total)${C_RESET}"
-                            
-                            success=$(echo "$jobs" | jq '[.[] | select(.status=="success")] | length' 2>/dev/null)
-                            failed=$(echo "$jobs" | jq '[.[] | select(.status=="failed")] | length' 2>/dev/null)
-                            running=$(echo "$jobs" | jq '[.[] | select(.status=="running")] | length' 2>/dev/null)
-                            pending=$(echo "$jobs" | jq '[.[] | select(.status=="pending")] | length' 2>/dev/null)
-                            created=$(echo "$jobs" | jq '[.[] | select(.status=="created")] | length' 2>/dev/null)
-                            manual=$(echo "$jobs" | jq '[.[] | select(.status=="manual")] | length' 2>/dev/null)
-                            
-                            echo -e "  ${C_HEADER}├─${C_RESET} ${C_GREEN}✓ $success${C_RESET}  ${C_RED}✗ $failed${C_RESET}  ${C_YELLOW}⏳ $running${C_RESET}  ${C_CYAN}○ $((pending + created))${C_RESET}  ${C_BLUE}⚙ $manual${C_RESET}"
-                            echo -e "  ${C_HEADER}│${C_RESET}"
-                            
-                            # Show jobs (max 15)
-                            echo "$jobs" | jq -r '.[] | "\(.stage)|\(.name)|\(.status)|\(.duration)"' 2>/dev/null | head -15 | while IFS='|' read -r stage name stat duration; do
-                                case "$stat" in
-                                    success) icon="${C_GREEN}✓${C_RESET}" ;;
-                                    failed) icon="${C_RED}✗${C_RESET}" ;;
-                                    running) icon="${C_YELLOW}⏳${C_RESET}" ;;
-                                    pending|created) icon="${C_CYAN}○${C_RESET}" ;;
-                                    manual) icon="${C_BLUE}⚙${C_RESET}" ;;
-                                    *) icon="${C_DIM}?${C_RESET}" ;;
-                                esac
-                                
-                                # Duration
-                                dur_str="-"
-                                if [ "$duration" != "null" ] && [ -n "$duration" ]; then
-                                    duration_int=$(echo "$duration" | cut -d. -f1)
-                                    if [ -n "$duration_int" ] && [ "$duration_int" != "null" ]; then
-                                        dur_str=$(format_duration $duration_int)
-                                    fi
-                                fi
-                                
-                                # Truncate long names
-                                if [ ${#name} -gt 30 ]; then
-                                    name="${name:0:27}..."
-                                fi
-                                
-                                echo -e "  ${C_HEADER}├──${C_RESET} $icon  ${C_DIM}$(printf '%-12s' "$stage")${C_RESET}  $(printf '%-30s' "$name")  ${C_DIM}$dur_str${C_RESET}"
-                            done
-                            
-                            if [ "$job_count" -gt 15 ]; then
-                                echo -e "  ${C_HEADER}├──${C_RESET} ${C_DIM}... and $((job_count - 15)) more jobs${C_RESET}"
-                            fi
-                        fi
-                    fi
-                fi
+            render_error_box "Failed to delete branch '$branch'" "Ensure branch is not locked or checked out in a worktree" "git worktree list"
+        fi
+    fi
+}
+
+action_bulk_delete() {
+    local raw_ids="$1"
+    IFS=',' read -ra id_list <<< "$raw_ids"
+
+    if [ "${#id_list[@]}" -eq 0 ]; then
+        render_error_box "No branch IDs provided for bulk delete" "Provide comma-separated branch IDs" "git-record -b 2,4,5"
+    fi
+
+    local valid_branches=()
+    echo
+    printf "  %b%s REVIEW BRANCHES TO DELETE:%b\n" "$C_BOLD$C_YELLOW" "$ICON_CLEANUP" "$C_RESET"
+
+    for raw_id in "${id_list[@]}"; do
+        local clean_id
+        clean_id=$(echo "$raw_id" | tr -d ' ')
+        if ! [[ "$clean_id" =~ ^[0-9]+$ ]]; then
+            render_error_box "Invalid ID in bulk list: '$clean_id'" "All IDs must be numeric" "git-record -b 2,3,5"
+        fi
+
+        if [ "$clean_id" -lt 1 ] || [ "$clean_id" -gt "$TOTAL_VISIBLE" ]; then
+            render_error_box "ID $clean_id out of range (1-$TOTAL_VISIBLE)" "Check table IDs" "git-record"
+        fi
+
+        local bname="${ROWS_BRANCH_TEXT[$clean_id]}"
+        local bref="${ROWS_BRANCH_REF[$clean_id]}"
+
+        if [[ "$bref" != refs/heads/* ]]; then
+            print_warn "Skipping ID $clean_id ($bname) - Remote branches cannot be bulk deleted locally."
+            continue
+        fi
+
+        if [ "$bname" = "$CUR_BRANCH" ]; then
+            print_warn "Skipping ID $clean_id ($bname) - Cannot delete currently checked-out branch."
+            continue
+        fi
+
+        valid_branches+=("$bname")
+        printf "    %b[%s]%b %-30s\n" "$C_DIM" "$clean_id" "$C_RESET" "$bname"
+    done
+
+    if [ "${#valid_branches[@]}" -eq 0 ]; then
+        print_warn "No eligible local branches found to delete."
+        return 0
+    fi
+
+    echo
+    printf "  %bConfirm deletion of %d local branches? (yes/no): %b" "$C_YELLOW$C_BOLD" "${#valid_branches[@]}" "$C_RESET"
+    read -r confirm
+    if [ "$confirm" != "yes" ]; then
+        print_info "Bulk deletion cancelled."
+        return 0
+    fi
+
+    local deleted=0
+    for b in "${valid_branches[@]}"; do
+        if git branch -D "$b" >/dev/null 2>&1; then
+            print_success "Deleted: $b"
+            deleted=$((deleted + 1))
+        else
+            print_warn "Failed to delete: $b"
+        fi
+    done
+
+    echo
+    print_success "Bulk cleanup complete. Deleted $deleted/${#valid_branches[@]} branches."
+    echo
+}
+
+action_merge() {
+    local target="$1"
+    resolve_branch_target "$target" "-m"
+    local branch="$RESOLVED_BRANCH"
+
+    if [ "$branch" = "$CUR_BRANCH" ]; then
+        render_error_box "Cannot merge branch '$branch' into itself" "Switch to target branch first" "git-record -c main"
+    fi
+
+    # Check for uncommitted working tree changes
+    if ! git diff-index --quiet HEAD -- 2>/dev/null; then
+        render_error_box "Working tree has uncommitted changes" "Commit or stash changes before merging" "git stash"
+    fi
+
+    # Pre-merge conflict check
+    local base_commit
+    base_commit=$(git merge-base HEAD "$branch" 2>/dev/null)
+    if [ -n "$base_commit" ]; then
+        local conflict_test
+        conflict_test=$(git merge-tree "$base_commit" HEAD "$branch" 2>/dev/null)
+        if [[ "$conflict_test" =~ \+{7}\ (our|their|base) ]] || [[ "$conflict_test" =~ \<{7} ]]; then
+            print_warn "Potential merge conflicts detected in advance!"
+            printf "  %bRun merge conflict inspection first? (y/N): %b" "$C_YELLOW" "$C_RESET"
+            read -r inspect_conflicts
+            if [[ "$inspect_conflicts" =~ ^[Yy]$ ]]; then
+                action_conflicts "$target"
+                return 0
             fi
         fi
-        
-        # Footer
-        echo -e "  ${C_HEADER}│${C_RESET}"
-        echo -e "  ${C_HEADER}╰─${C_RESET}${C_BOLD}${C_DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${C_RESET}"
-        
-        # Countdown with progress bar
-        for ((i=REFRESH_INTERVAL; i>0; i--)); do
-            progress=$((100 - (i * 100 / REFRESH_INTERVAL)))
-            bar_length=$((progress / 2))
-            bar=""
-            for ((j=0; j<50; j++)); do
-                if [ $j -lt $bar_length ]; then
-                    bar="${bar}${C_CYAN}━${C_RESET}"
-                else
-                    bar="${bar}${C_DIM}━${C_RESET}"
+    fi
+
+    echo -e "\n  ${C_CYAN}${ICON_SYNC} Merging '${C_BOLD}$branch${C_RESET}${C_CYAN}' into '${C_BOLD}$CUR_BRANCH${C_RESET}${C_CYAN}'...${C_RESET}\n"
+    if git merge "$branch"; then
+        print_success "Successfully merged '$branch' into '$CUR_BRANCH'"
+    else
+        render_error_box "Merge resulted in conflicts" "Resolve conflicts in editor, then commit result" "git status"
+    fi
+}
+
+action_rename() {
+    local target="$1"
+    local new_name="$2"
+    resolve_branch_target "$target" "-R"
+    local branch="$RESOLVED_BRANCH"
+    local ref="$RESOLVED_REF"
+
+    if [[ "$ref" != refs/heads/* ]]; then
+        render_error_box "Cannot rename remote branch directly" "Only local branches can be renamed" "git-record"
+    fi
+
+    if [ -z "$new_name" ]; then
+        echo -e "\n  ${C_HEADER}Current Branch Name:${C_RESET} ${C_CYAN}$branch${C_RESET}"
+        printf "  %bEnter new branch name: %b" "$C_BOLD" "$C_RESET"
+        read -r new_name
+    fi
+
+    if [ -z "$new_name" ]; then
+        render_error_box "New branch name cannot be empty" "Provide a valid branch name" "git-record -r 1 new-feature"
+    fi
+
+    if ! git check-ref-format --branch "$new_name" 2>/dev/null; then
+        render_error_box "Invalid Git branch name: '$new_name'" "Branch names cannot contain spaces, '~', '^', ':', or start with '-'" "git-record -r 1 feature/clean"
+    fi
+
+    if git branch -m "$branch" "$new_name"; then
+        print_success "Renamed branch '${C_BOLD}$branch${C_RESET}' → '${C_BOLD}$new_name${C_RESET}'"
+    fi
+}
+
+action_show() {
+    local target="$1"
+    resolve_branch_target "$target" "-s"
+    local branch="$RESOLVED_BRANCH"
+    local hash="$RESOLVED_HASH"
+
+    echo -e "\n  ${C_BOLD}${ICON_LOG} COMMIT DETAILS: ${C_CYAN}$branch${C_RESET} ${C_DIM}($hash)${C_RESET}\n"
+    git show --stat --decorate "$hash"
+    echo
+}
+
+action_copy_hash() {
+    local target="$1"
+    resolve_branch_target "$target" "-k"
+    local hash="$RESOLVED_HASH"
+
+    local full_hash
+    full_hash=$(git rev-parse "$hash" 2>/dev/null || echo "$hash")
+
+    if copy_to_clipboard "$full_hash"; then
+        echo
+        print_success "Copied commit hash to clipboard: ${C_BOLD}$full_hash${C_RESET}"
+        echo
+    else
+        echo
+        print_info "Commit hash: ${C_BOLD}$full_hash${C_RESET}"
+        echo
+    fi
+}
+
+# ------------------------------------------------------------------------------
+# 📊 DEEP ANALYTICS & COMPARISON SUITE
+# ------------------------------------------------------------------------------
+
+action_stats() {
+    local target="$1"
+    resolve_branch_target "$target" "-X"
+    local branch="$RESOLVED_BRANCH"
+
+    local base_ref="$PRIMARY_BRANCH"
+    if [ "$branch" = "$base_ref" ] || [ "$branch" = "origin/$base_ref" ]; then
+        base_ref="HEAD~20"
+    fi
+
+    echo -e "\n  ${C_BOLD}${ICON_STATS} BRANCH METRICS & STATISTICS: ${C_CYAN}$branch${C_RESET}\n"
+
+    # Commit counts & Churn
+    local commits_ahead commits_behind
+    commits_ahead=$(git rev-list --count "$base_ref..$branch" 2>/dev/null || echo 0)
+    commits_behind=$(git rev-list --count "$branch..$base_ref" 2>/dev/null || echo 0)
+
+    # Churn stats
+    local additions=0 deletions=0 files_changed=0
+    while read -r add del file; do
+        [ -z "$file" ] && continue
+        [[ "$add" =~ ^[0-9]+$ ]] && additions=$((additions + add))
+        [[ "$del" =~ ^[0-9]+$ ]] && deletions=$((deletions + del))
+        files_changed=$((files_changed + 1))
+    done < <(git diff --numstat "$base_ref...$branch" 2>/dev/null)
+
+    # Output Card
+    printf "  %b┌─ Activity Relative to %s%b\n" "$C_HEADER" "$base_ref" "$C_RESET"
+    printf "  %b│%b  Ahead:       %b+%s commits%b\n" "$C_HEADER" "$C_RESET" "$C_GREEN" "$commits_ahead" "$C_RESET"
+    printf "  %b│%b  Behind:      %b-%s commits%b\n" "$C_HEADER" "$C_RESET" "$C_RED" "$commits_behind" "$C_RESET"
+    printf "  %b│%b  Files:       %s modified\n" "$C_HEADER" "$C_RESET" "$files_changed"
+    printf "  %b│%b  Lines Added: %b+%s%b\n" "$C_HEADER" "$C_RESET" "$C_GREEN" "$additions" "$C_RESET"
+    printf "  %b│%b  Lines Del:   %b-%s%b\n" "$C_HEADER" "$C_RESET" "$C_RED" "$deletions" "$C_RESET"
+    printf "  %b│%b  Net Churn:   %b%s%b lines\n" "$C_HEADER" "$C_RESET" "$C_CYAN" "$((additions - deletions))" "$C_RESET"
+    printf "  %b└────────────────────────────────────────%b\n\n" "$C_HEADER" "$C_RESET"
+
+    # Top Contributors on this branch
+    printf "  %b%s Top Contributors:%b\n" "$C_BOLD" "$ICON_TEAM" "$C_RESET"
+    git shortlog -sn --no-merges -n 5 "$base_ref..$branch" 2>/dev/null | while read -r c author; do
+        printf "    %-24s " "$author"
+        draw_bar "$c" "${commits_ahead:-10}" 15 "$C_BLUE"
+        printf " %3d commits\n" "$c"
+    done
+
+    # Recent Commits
+    echo
+    printf "  %b%s Recent Commits on %s:%b\n" "$C_BOLD" "$ICON_LOG" "$branch" "$C_RESET"
+    git log --oneline --graph -n 8 "$branch" 2>/dev/null | sed 's/^/    /'
+    echo
+}
+
+action_compare() {
+    local pair="$1"
+    if [[ ! "$pair" =~ ^([^:]+):([^:]+)$ ]]; then
+        render_error_box "Invalid comparison format: '$pair'" "Format must be <ID1>:<ID2> or <branch1>:<branch2>" "git-record -C 1:3"
+    fi
+
+    local target1="${BASH_REMATCH[1]}"
+    local target2="${BASH_REMATCH[2]}"
+
+    resolve_branch_target "$target1" "-C"
+    local branch1="$RESOLVED_BRANCH"
+    local hash1="$RESOLVED_HASH"
+
+    resolve_branch_target "$target2" "-C"
+    local branch2="$RESOLVED_BRANCH"
+    local hash2="$RESOLVED_HASH"
+
+    echo -e "\n  ${C_BOLD}${ICON_SEARCH} TWO-WAY BRANCH COMPARISON${C_RESET}"
+    echo -e "  Branch A: ${C_CYAN}$branch1${C_RESET} ${C_DIM}($hash1)${C_RESET}"
+    echo -e "  Branch B: ${C_CYAN}$branch2${C_RESET} ${C_DIM}($hash2)${C_RESET}\n"
+
+    local base_commit
+    base_commit=$(git merge-base "$branch1" "$branch2" 2>/dev/null)
+    if [ -n "$base_commit" ]; then
+        echo -e "  ${C_HEADER}Common Merge Base:${C_RESET} ${C_DIM}$base_commit ($(git log -1 --format='%cr' "$base_commit"))${C_RESET}\n"
+    fi
+
+    echo -e "  ${C_HEADER}Commits in $branch1 but NOT in $branch2:${C_RESET}"
+    git log --oneline --no-merges -n 10 "$branch2..$branch1" 2>/dev/null | sed 's/^/    /' || echo "    (none)"
+
+    echo -e "\n  ${C_HEADER}Commits in $branch2 but NOT in $branch1:${C_RESET}"
+    git log --oneline --no-merges -n 10 "$branch1..$branch2" 2>/dev/null | sed 's/^/    /' || echo "    (none)"
+
+    echo -e "\n  ${C_HEADER}Diff Summary ($branch1 ... $branch2):${C_RESET}"
+    git diff --stat "$branch1...$branch2" 2>/dev/null | head -15 | sed 's/^/    /'
+    echo
+}
+
+action_conflicts() {
+    local target="$1"
+    local base_target="${2:-$PRIMARY_BRANCH}"
+
+    resolve_branch_target "$target" "-M"
+    local branch="$RESOLVED_BRANCH"
+
+    echo -e "\n  ${C_BOLD}${ICON_CONFLICT} MERGE CONFLICT PREDICTOR${C_RESET}"
+    echo -e "  Checking mergeability: ${C_CYAN}$branch${C_RESET} ➔ ${C_CYAN}$base_target${C_RESET}\n"
+
+    local base_commit
+    base_commit=$(git merge-base "$base_target" "$branch" 2>/dev/null)
+
+    if [ -z "$base_commit" ]; then
+        render_error_box "No common ancestor found between $branch and $base_target" "Branches do not share git commit history" "git-record -C $branch:$base_target"
+    fi
+
+    # Read modified files on both sides
+    local files_a files_b
+    mapfile -t files_a < <(git diff --name-only "$base_commit" "$branch" 2>/dev/null)
+    mapfile -t files_b < <(git diff --name-only "$base_commit" "$base_target" 2>/dev/null)
+
+    local overlapping=()
+    for fa in "${files_a[@]}"; do
+        for fb in "${files_b[@]}"; do
+            if [ "$fa" = "$fb" ]; then
+                overlapping+=("$fa")
+                break
+            fi
+        done
+    done
+
+    if [ "${#overlapping[@]}" -eq 0 ]; then
+        echo -e "  ${C_SUCCESS}${ICON_CHECK} Clean Merge Expected!${C_RESET}"
+        echo -e "  ${C_DIM}No overlapping file modifications between both branches.${C_RESET}\n"
+        return 0
+    fi
+
+    echo -e "  ${C_WARN}${ICON_WARN_TRI} Potential file overlap in ${#overlapping[@]} file(s):${C_RESET}\n"
+    for f in "${overlapping[@]}"; do
+        local changes_a changes_b
+        changes_a=$(git diff --numstat "$base_commit" "$branch" -- "$f" 2>/dev/null | awk '{print "+" $1 "/-" $2}')
+        changes_b=$(git diff --numstat "$base_commit" "$base_target" -- "$f" 2>/dev/null | awk '{print "+" $1 "/-" $2}')
+        printf "    %b%s%b  %-40s %b(%s in branch, %s in %s)%b\n" \
+            "$C_RED" "$ICON_CONFLICT" "$C_RESET" "$f" "$C_DIM" "${changes_a:-+0/-0}" "${changes_b:-+0/-0}" "$base_target" "$C_RESET"
+    done
+
+    echo
+    printf "  %bTip: Inspect exact file diff with: git diff %s...%s -- <filename>%b\n\n" "$C_DIM" "$base_target" "$branch" "$C_RESET"
+}
+
+action_velocity() {
+    local days="${1:-$VELOCITY_DAYS}"
+    if ! [[ "$days" =~ ^[0-9]+$ ]]; then
+        days=$VELOCITY_DAYS
+    fi
+
+    local since_date
+    since_date=$(get_past_date "$days" "%Y-%m-%d")
+
+    echo -e "\n  ${C_BOLD}${ICON_GRAPH} TEAM VELOCITY & METRICS (Past $days Days)${C_RESET}\n"
+
+    # Total commit count & author count in window
+    local total_commits total_authors
+    total_commits=$(git log --since="$since_date" --all --oneline 2>/dev/null | wc -l | tr -d ' ')
+    total_authors=$(git log --since="$since_date" --all --format='%an' 2>/dev/null | sort -u | wc -l | tr -d ' ')
+    local avg_per_day=0
+    [ "$days" -gt 0 ] && avg_per_day=$((total_commits / days))
+
+    printf "  %b┌─ Summary (%s to Present)%b\n" "$C_HEADER" "$since_date" "$C_RESET"
+    printf "  %b│%b  Total Commits:  %b%s%b\n" "$C_HEADER" "$C_RESET" "$C_BOLD$C_CYAN" "$total_commits" "$C_RESET"
+    printf "  %b│%b  Active Authors: %b%s%b\n" "$C_HEADER" "$C_RESET" "$C_BOLD$C_GREEN" "$total_authors" "$C_RESET"
+    printf "  %b│%b  Avg Commits/Day:%b %s%b\n" "$C_HEADER" "$C_RESET" "$C_BOLD$C_YELLOW" "$avg_per_day" "$C_RESET"
+    printf "  %b└────────────────────────────────────────%b\n\n" "$C_HEADER" "$C_RESET"
+
+    # Top Committers
+    printf "  %b%s Top Contributors by Commit Volume:%b\n" "$C_BOLD" "$ICON_TEAM" "$C_RESET"
+    local max_author_commits=1
+    while read -r c _; do
+        [ -n "$c" ] && [ "$c" -gt "$max_author_commits" ] && max_author_commits=$c
+    done < <(git log --since="$since_date" --all --format='%an' 2>/dev/null | sort | uniq -c | sort -rn | head -1)
+
+    git log --since="$since_date" --all --format='%an' 2>/dev/null | sort | uniq -c | sort -rn | head -8 | while read -r c author; do
+        [ -z "$c" ] && continue
+        printf "    %-24s " "$author"
+        draw_bar "$c" "$max_author_commits" 20 "$C_CYAN"
+        printf " %3d commits\n" "$c"
+    done
+
+    # Daily Activity Trend (Past 14 Days)
+    echo
+    printf "  %b%s Daily Commit Timeline:%b\n" "$C_BOLD" "$ICON_CLOCK" "$C_RESET"
+    local past_14
+    past_14=$(get_past_date 14 "%Y-%m-%d")
+    git log --since="$past_14" --all --date=short --format='%cd' 2>/dev/null | sort | uniq -c | while read -r c dt; do
+        [ -z "$dt" ] && continue
+        printf "    %-12s " "$dt"
+        draw_bar "$c" 30 18 "$C_GREEN"
+        printf " %3d\n" "$c"
+    done
+    echo
+}
+
+action_graph() {
+    echo -e "\n  ${C_BOLD}${ICON_GRAPH} BRANCH DIVERGENCE & TOPOLOGY GRAPH${C_RESET}\n"
+    local main_b="$PRIMARY_BRANCH"
+    printf "  %bBase Reference: %s%b\n\n" "$C_DIM" "$main_b" "$C_RESET"
+
+    local branches=()
+    mapfile -t branches < <(git for-each-ref --format='%(refname:short)' refs/heads 2>/dev/null | head -25)
+
+    for b in "${branches[@]}"; do
+        if [ "$b" = "$main_b" ]; then
+            printf "  %b%s (Base Root)%b\n" "$C_BOLD$C_GREEN" "$b" "$C_RESET"
+            continue
+        fi
+
+        local ahead behind
+        ahead=$(git rev-list --count "$main_b..$b" 2>/dev/null || echo 0)
+        behind=$(git rev-list --count "$b..$main_b" 2>/dev/null || echo 0)
+
+        local status_badge=""
+        if [ "$ahead" -eq 0 ] && [ "$behind" -eq 0 ]; then
+            status_badge="${C_GREEN}[synchronized]${C_RESET}"
+        elif [ "$behind" -eq 0 ]; then
+            status_badge="${C_CYAN}[pure ahead]${C_RESET}"
+        elif [ "$ahead" -gt 30 ] || [ "$behind" -gt 30 ]; then
+            status_badge="${C_RED}[diverged]${C_RESET}"
+        else
+            status_badge="${C_YELLOW}[active branch]${C_RESET}"
+        fi
+
+        printf "  %b├──%b %-30s %b+%s%b / %b-%s%b  %s\n" \
+            "$C_BORDER" "$C_RESET" "$b" \
+            "$C_GREEN" "$ahead" "$C_RESET" \
+            "$C_RED" "$behind" "$C_RESET" \
+            "$status_badge"
+    done
+    echo
+}
+
+action_cleanup_audit() {
+    echo -e "\n  ${C_BOLD}${ICON_CLEANUP} SMART REPOSITORY CLEANUP AUDITOR${C_RESET}\n"
+    local main_b="$PRIMARY_BRANCH"
+
+    # Detect fully merged branches
+    local merged=()
+    while IFS= read -r b; do
+        b=$(echo "$b" | tr -d ' *')
+        if [ -n "$b" ] && [ "$b" != "$main_b" ] && [ "$b" != "$CUR_BRANCH" ] && [[ ! "$b" =~ ^(master|main|develop|staging|production) ]]; then
+            merged+=("$b")
+        fi
+    done < <(git branch --merged "$main_b" 2>/dev/null)
+
+    # Detect stale/abandoned branches (> CLEANUP_THRESHOLD days)
+    local stale=()
+    local threshold_ts=$(( $(date +%s) - (CLEANUP_THRESHOLD * 86400) ))
+    while IFS='|' read -r b ts; do
+        if [ -n "$ts" ] && [ "$ts" -lt "$threshold_ts" ] && [ "$b" != "$main_b" ] && [ "$b" != "$CUR_BRANCH" ]; then
+            stale+=("$b")
+        fi
+    done < <(git for-each-ref --format='%(refname:short)|%(committerdate:unix)' refs/heads 2>/dev/null)
+
+    if [ "${#merged[@]}" -eq 0 ] && [ "${#stale[@]}" -eq 0 ]; then
+        print_success "Repository is clean! No merged or stale branches need pruning."
+        echo
+        return 0
+    fi
+
+    if [ "${#merged[@]}" -gt 0 ]; then
+        echo -e "  ${C_GREEN}${ICON_CHECK} Merged Branches (Safe to Delete):${C_RESET}"
+        for b in "${merged[@]}"; do
+            echo -e "    ${C_DIM}└─${C_RESET} $b"
+        done
+        echo
+    fi
+
+    if [ "${#stale[@]}" -gt 0 ]; then
+        echo -e "  ${C_WARN}${ICON_WARN_TRI} Stale Branches (Inactive >$CLEANUP_THRESHOLD days):${C_RESET}"
+        for b in "${stale[@]}"; do
+            echo -e "    ${C_DIM}└─${C_RESET} $b"
+        done
+        echo
+    fi
+
+    if [ "${#merged[@]}" -gt 0 ]; then
+        printf "  %bWould you like to delete the %d merged branch(es) now? (y/N): %b" "$C_CYAN$C_BOLD" "${#merged[@]}" "$C_RESET"
+        read -r do_del
+        if [[ "$do_del" =~ ^[Yy]$ ]]; then
+            for b in "${merged[@]}"; do
+                if git branch -d "$b" 2>/dev/null; then
+                    print_success "Deleted merged branch: $b"
                 fi
             done
-            
-            echo -ne "\r  ${C_DIM}Next refresh:${C_RESET} ${bar} ${C_BOLD}${i}s${C_RESET}  ${C_DIM}│${C_RESET}  ${C_DIM}Press Ctrl+C to stop${C_RESET}     "
-            sleep 1
-        done
-        
-        # Small delay before next refresh to show "Refreshing..."
-        echo -ne "\r  ${C_DIM}Refreshing...${C_RESET}                                                                       \r"
-        sleep 0.1
-    done
-    
-    exit 0
-fi
-
-# =========================================================
-# OTHER ACTIONS
-# =========================================================
-
-if [ -n "$ACT_COMPARE" ]; then
-    IFS=':' read -r ID1 ID2 <<< "$ACT_COMPARE"
-    B1="${ROWS_BRANCH_TEXT[$ID1]}"; B2="${ROWS_BRANCH_TEXT[$ID2]}"
-    [ -z "$B1" ] || [ -z "$B2" ] && print_error "Invalid branch IDs"
-    
-    echo -e "\n  ${C_BOLD}${ICON_SEARCH} COMPARING BRANCHES${C_RESET}"
-    echo -e "  ${C_CYAN}$B1${C_RESET} ${C_DIM}vs${C_RESET} ${C_CYAN}$B2${C_RESET}\n"
-    
-    echo -e "  ${C_HEADER}Commits in $B1 but not in $B2:${C_RESET}"
-    git log --oneline "$B2..$B1" --no-merges | head -10 | sed 's/^/  /' || echo "  ${C_DIM}(none)${C_RESET}"
-    
-    echo -e "\n  ${C_HEADER}Commits in $B2 but not in $B1:${C_RESET}"
-    git log --oneline "$B1..$B2" --no-merges | head -10 | sed 's/^/  /' || echo "  ${C_DIM}(none)${C_RESET}"
-    
-    echo -e "\n  ${C_HEADER}File changes:${C_RESET}"
-    git diff --stat "$B1...$B2" | sed 's/^/  /'
-    echo
-    exit 0
-fi
-
-if [ -n "$ACT_DIFF" ]; then
-    IFS=':' read -r ID1 ID2 <<< "$ACT_DIFF"
-    
-    commit1="${ROWS_HASH[$ID1]}"
-    commit2="${ROWS_HASH[$ID2]}"
-    branch1="${ROWS_BRANCH_TEXT[$ID1]}"
-    branch2="${ROWS_BRANCH_TEXT[$ID2]}"
-    
-    if [ -z "$commit1" ] || [ -z "$commit2" ]; then
-        echo -e "\n  ${C_RED}✖ Invalid branch IDs: $ID1, $ID2${C_RESET}"
-        echo -e "  ${C_DIM}Available IDs: 1-$TOTAL_VISIBLE${C_RESET}\n"
-        exit 1
-    fi
-    
-    echo -e "\n  ${C_BOLD}${ICON_SEARCH} COMMIT COMPARISON${C_RESET}\n"
-    
-    # Show commit details
-    echo -e "  ${C_HEADER}Commit 1:${C_RESET}"
-    echo -e "    ${C_CYAN}Branch:${C_RESET} $branch1"
-    echo -e "    ${C_CYAN}SHA:${C_RESET} $commit1"
-    git log -1 --format="    ${C_CYAN}Author:${C_RESET} %an <%ae>%n    ${C_CYAN}Date:${C_RESET} %cr%n    ${C_CYAN}Message:${C_RESET} %s" "$commit1" 2>/dev/null
-    
-    echo
-    echo -e "  ${C_HEADER}Commit 2:${C_RESET}"
-    echo -e "    ${C_CYAN}Branch:${C_RESET} $branch2"
-    echo -e "    ${C_CYAN}SHA:${C_RESET} $commit2"
-    git log -1 --format="    ${C_CYAN}Author:${C_RESET} %an <%ae>%n    ${C_CYAN}Date:${C_RESET} %cr%n    ${C_CYAN}Message:${C_RESET} %s" "$commit2" 2>/dev/null
-    
-    echo
-    echo -e "  ${C_HEADER}Summary:${C_RESET}"
-    
-    # Get diff stats
-    files_changed=$(git diff --numstat "$commit1" "$commit2" 2>/dev/null | wc -l)
-    additions=$(git diff --numstat "$commit1" "$commit2" 2>/dev/null | awk '{add+=$1} END {print add+0}')
-    deletions=$(git diff --numstat "$commit1" "$commit2" 2>/dev/null | awk '{del+=$2} END {print del+0}')
-    
-    echo -e "    ${C_CYAN}Files changed:${C_RESET} $files_changed"
-    echo -e "    ${C_GREEN}Additions:${C_RESET}    +$additions lines"
-    echo -e "    ${C_RED}Deletions:${C_RESET}    -$deletions lines"
-    echo -e "    ${C_CYAN}Net change:${C_RESET}   $((additions - deletions)) lines"
-    
-    echo
-    echo -e "  ${C_HEADER}Changed Files:${C_RESET}"
-    git diff --stat "$commit1" "$commit2" 2>/dev/null | head -20 | sed 's/^/    /'
-    
-    total_files=$(git diff --name-only "$commit1" "$commit2" 2>/dev/null | wc -l)
-    if [ "$total_files" -gt 20 ]; then
-        echo -e "    ${C_DIM}... and $((total_files - 20)) more files${C_RESET}"
-    fi
-    
-    echo
-    echo -e "  ${C_HEADER}File-by-File Changes:${C_RESET}"
-    git diff --name-status "$commit1" "$commit2" 2>/dev/null | head -15 | while IFS=$'\t' read -r status file; do
-        case "$status" in
-            A) echo -e "    ${C_GREEN}+${C_RESET} ${C_DIM}Added:${C_RESET}    $file" ;;
-            M) echo -e "    ${C_YELLOW}~${C_RESET} ${C_DIM}Modified:${C_RESET} $file" ;;
-            D) echo -e "    ${C_RED}-${C_RESET} ${C_DIM}Deleted:${C_RESET}  $file" ;;
-            R*) echo -e "    ${C_CYAN}→${C_RESET} ${C_DIM}Renamed:${C_RESET}  $file" ;;
-            *) echo -e "    ${C_DIM}?${C_RESET} $status: $file" ;;
-        esac
-    done
-    
-    if [ "$total_files" -gt 15 ]; then
-        echo -e "    ${C_DIM}... and $((total_files - 15)) more files${C_RESET}"
-    fi
-    
-    echo
-    echo -e "  ${C_HEADER}View Full Diff:${C_RESET}"
-    echo -e "    ${C_CYAN}git diff $commit1 $commit2${C_RESET}"
-    echo -e "    ${C_CYAN}git diff $commit1 $commit2 -- <file>${C_RESET} ${C_DIM}(for specific file)${C_RESET}"
-    echo
-    
-    exit 0
-fi
-
-if [ -n "$ACT_STATUS" ]; then
-    branch="${ROWS_BRANCH_TEXT[$ACT_STATUS]}"
-    [ -z "$branch" ] && print_error "Invalid branch ID"
-    
-    echo -e "\n  ${C_BOLD}Branch Status: ${C_CYAN}$branch${C_RESET}\n"
-    status=$(get_branch_status "$branch")
-    echo -e "  Push/Pull Status: $status\n"
-    
-    upstream=$(git rev-parse --abbrev-ref "$branch@{upstream}" 2>/dev/null)
-    if [ -n "$upstream" ]; then
-        echo -e "  ${C_HEADER}Upstream:${C_RESET} $upstream"
-        echo -e "  ${C_HEADER}Last sync:${C_RESET} $(git show -s --format='%cr' "$upstream")\n"
-    else
-        echo -e "  ${C_DIM}No upstream tracking branch${C_RESET}\n"
-    fi
-    exit 0
-fi
-
-if [ -n "$ACT_BULK_DELETE" ]; then
-    IFS=',' read -ra IDS <<< "$ACT_BULK_DELETE"
-    echo -e "\n  ${C_YELLOW}Preparing to delete ${#IDS[@]} branches:${C_RESET}"
-    
-    for id in "${IDS[@]}"; do
-        id=$(echo "$id" | xargs)
-        branch="${ROWS_BRANCH_TEXT[$id]}"
-        [ -n "$branch" ] && echo -e "    ${C_DIM}[$id]${C_RESET} $branch"
-    done
-    
-    echo
-    read -p "  Confirm deletion? (yes/no): " confirm
-    if [[ "$confirm" == "yes" ]]; then
-        deleted=0
-        for id in "${IDS[@]}"; do
-            id=$(echo "$id" | xargs)
-            branch="${ROWS_BRANCH_TEXT[$id]}"
-            if [ -n "$branch" ] && [[ "${ROWS_BRANCH_REF[$id]}" == refs/heads/* ]]; then
-                if git branch -D "$branch" 2>/dev/null; then
-                    echo -e "  ${C_GREEN}✔${C_RESET} Deleted: $branch"
-                    ((deleted++))
-                else
-                    echo -e "  ${C_RED}✖${C_RESET} Failed: $branch"
-                fi
-            fi
-        done
-        echo -e "\n  ${C_GREEN}Deleted $deleted/${#IDS[@]} branches${C_RESET}\n"
-    else
-        echo -e "  ${C_DIM}Cancelled${C_RESET}\n"
-    fi
-    exit 0
-fi
-
-if [ -n "$ACT_TEAM" ]; then
-    id=$ACT_TEAM; name="${ROWS_BRANCH_TEXT[$id]}"; ref="${ROWS_BRANCH_REF[$id]}"
-    [ -z "$name" ] && print_error "Invalid branch ID"
-    
-    BASE=""; for b in master main staging develop; do 
-        git show-ref --verify --quiet "refs/remotes/origin/$b" && BASE="origin/$b" && break
-    done
-    
-    echo -e "\n  ${C_BOLD}${ICON_TEAM} CONTRIBUTORS: ${C_BLUE}${name}${C_RESET}\n"
-    if [ -n "$BASE" ]; then 
-        git shortlog -sn --no-merges "$BASE..$ref" 2>/dev/null | sed 's/^/   /'
-    else 
-        git shortlog -sn --no-merges -n 10 "$ref" 2>/dev/null | sed 's/^/   /'
-    fi
-    echo
-    exit 0
-fi
-
-if [ "$ACT_INTERACTIVE" -eq 1 ]; then
-    render_table
-    echo
-    echo -e "  ${C_BOLD}Interactive Mode${C_RESET}"
-    echo -e "  ${C_HEADER}Basic Actions:${C_RESET}"
-    echo -e "  ${C_CYAN}1)${C_RESET} Checkout  ${C_CYAN}2)${C_RESET} Show  ${C_CYAN}3)${C_RESET} Merge  ${C_CYAN}4)${C_RESET} Delete  ${C_CYAN}5)${C_RESET} Compare"
-    echo -e "  ${C_HEADER}Advanced:${C_RESET}"
-    echo -e "  ${C_CYAN}6)${C_RESET} Statistics  ${C_CYAN}7)${C_RESET} Velocity  ${C_CYAN}8)${C_RESET} Conflicts  ${C_CYAN}9)${C_RESET} CI Status  ${C_CYAN}0)${C_RESET} Exit"
-    echo
-    read -p "  Enter choice: " choice
-    
-    case $choice in
-        1) read -p "  Branch ID to checkout: " ACT_CHECKOUT ;;
-        2) read -p "  Branch ID to show: " ACT_SHOW ;;
-        3) read -p "  Branch ID to merge: " ACT_MERGE ;;
-        4) read -p "  Branch ID to delete: " ACT_DELETE ;;
-        5) read -p "  Compare (ID1:ID2): " ACT_COMPARE ;;
-        6) read -p "  Branch ID for statistics: " ACT_STATS ;;
-        7) calculate_team_velocity; exit 0 ;;
-        8) read -p "  Branch ID to check conflicts: " ACT_CONFLICTS ;;
-        9) read -p "  Branch ID for CI status: " ACT_CI ;;
-        0) exit 0 ;;
-        *) print_error "Invalid choice" ;;
-    esac
-fi
-
-# =========================================================
-# DISPLAY TABLE IF NO ACTION
-# =========================================================
-
-if [ -z "$ACT_CHECKOUT" ] && [ -z "$ACT_MERGE" ] && [ -z "$ACT_DELETE" ] && [ -z "$ACT_RENAME" ] && [ -z "$ACT_SHOW" ] && [ -z "$ACT_COPY_HASH" ]; then
-    render_table
-    print_suggestions
-    exit 0
-fi
-
-# =========================================================
-# EXECUTE WORKFLOW ACTIONS
-# =========================================================
-
-if [ -n "$ACT_CHECKOUT" ]; then
-    name="${ROWS_BRANCH_TEXT[$ACT_CHECKOUT]}"
-    ref="${ROWS_BRANCH_REF[$ACT_CHECKOUT]}"
-    [ -z "$name" ] && print_error "Invalid branch ID"
-    
-    if [[ "$ref" == refs/heads/* ]]; then
-        git checkout "$name" && print_succ "Checked out: $name"
-    else
-        clean="${name#*/}"
-        if git show-ref --verify --quiet "refs/heads/$clean"; then
-            git checkout "$clean" && print_succ "Checked out existing: $clean"
-        else
-            git checkout -b "$clean" --track "$name" 2>/dev/null && print_succ "Created and checked out: $clean"
         fi
     fi
-    
-elif [ -n "$ACT_SHOW" ]; then
-    hash="${ROWS_HASH[$ACT_SHOW]}"
-    [ -z "$hash" ] && print_error "Invalid branch ID"
-    git show --stat "$hash"
-    
-elif [ -n "$ACT_DELETE" ]; then
-    name="${ROWS_BRANCH_TEXT[$ACT_DELETE]}"
-    ref="${ROWS_BRANCH_REF[$ACT_DELETE]}"
-    [ -z "$name" ] && print_error "Invalid branch ID"
-    
-    [[ "$ref" != refs/heads/* ]] && print_error "Can only delete local branches"
-    [ "$name" == "$CUR_BRANCH" ] && print_error "Cannot delete current branch"
-    
-    if [[ "$name" =~ ^(master|main|develop|staging|production)$ ]]; then
-        print_warn "This looks like a protected branch: $name"
-        read -p "Are you sure? (yes/no): " confirm
-        [[ "$confirm" != "yes" ]] && exit 0
+    echo
+}
+
+action_tags() {
+    local limit="${1:-$DEFAULT_LIMIT}"
+    echo -e "\n  ${C_BOLD}${ICON_TAG} REPOSITORY TAGS & RELEASES${C_RESET}\n"
+
+    if ! git tag -l | head -1 >/dev/null 2>&1; then
+        print_info "No tags found in repository."
+        echo
+        return 0
     fi
-    
-    git branch -D "$name" 2>/dev/null && print_succ "Deleted: $name"
-    
-elif [ -n "$ACT_MERGE" ]; then
-    name="${ROWS_BRANCH_TEXT[$ACT_MERGE]}"
-    [ -z "$name" ] && print_error "Invalid branch ID"
-    
-    echo -e "${C_CYAN}Merging $name into $CUR_BRANCH...${C_RESET}"
-    git merge "$name" && print_succ "Merge completed"
-    
-elif [ -n "$ACT_RENAME" ]; then
-    old_name="${ROWS_BRANCH_TEXT[$ACT_RENAME]}"
-    ref="${ROWS_BRANCH_REF[$ACT_RENAME]}"
-    [ -z "$old_name" ] && print_error "Invalid branch ID"
-    
-    [[ "$ref" != refs/heads/* ]] && print_error "Can only rename local branches"
-    
-    echo -e "  Current name: ${C_CYAN}$old_name${C_RESET}"
-    read -p "  New name: " new_name
-    
-    [ -z "$new_name" ] && print_error "Name cannot be empty"
-    
-    git branch -m "$old_name" "$new_name" 2>/dev/null && print_succ "Renamed: $old_name → $new_name"
-    
-elif [ -n "$ACT_COPY_HASH" ]; then
-    hash="${ROWS_HASH[$ACT_COPY_HASH]}"
-    [ -z "$hash" ] && print_error "Invalid branch ID"
-    
-    if copy_to_clipboard "$hash"; then
-        echo -e "${C_DIM}Hash: ${C_BOLD}$hash${C_RESET}"
-        print_succ "Commit hash copied to clipboard"
+
+    git tag -l --sort=-creatordate --format='%(refname:short)|%(creatordate:relative)|%(objectname:short)|%(subject)' | head -n "$limit" | while IFS='|' read -r tag date hash msg; do
+        printf "  %b%-22s%b %b%-16s%b %b%s%b  %s\n" \
+            "$C_CYAN$C_BOLD" "$tag" "$C_RESET" \
+            "$C_TIME" "$date" "$C_RESET" \
+            "$C_DIM" "$hash" "$C_RESET" \
+            "${msg:0:40}"
+    done
+    echo
+}
+
+action_stash() {
+    echo -e "\n  ${C_BOLD}${ICON_STASH} STASHED CHANGES${C_RESET}\n"
+
+    if ! git stash list | head -1 >/dev/null 2>&1; then
+        print_info "No stashed changes in repository."
+        echo
+        return 0
     fi
-fi
+
+    git stash list --format='%gd|%cr|%s' | while IFS='|' read -r stash_ref date msg; do
+        printf "  %b%-12s%b %b%-16s%b %s\n" \
+            "$C_YELLOW$C_BOLD" "$stash_ref" "$C_RESET" \
+            "$C_TIME" "$date" "$C_RESET" \
+            "$msg"
+    done
+    printf "\n  %bApply stash with: git stash apply <stash@{N}>%b\n\n" "$C_DIM" "$C_RESET"
+}
+
+action_worktrees() {
+    echo -e "\n  ${C_BOLD}${ICON_WORKTREE} GIT WORKTREES${C_RESET}\n"
+    local count=0
+    while read -r wt_path wt_head wt_branch wt_extra; do
+        [ -z "$wt_path" ] && continue
+        count=$((count + 1))
+        printf "  %b%-35s%b %b%-20s%b %b%s %s%b\n" \
+            "$C_CYAN" "$wt_path" "$C_RESET" \
+            "$C_GREEN$C_BOLD" "$wt_branch" "$C_RESET" \
+            "$C_DIM" "$wt_head" "$wt_extra" "$C_RESET"
+    done < <(git worktree list 2>/dev/null)
+
+    if [ "$count" -eq 0 ]; then
+        print_info "No worktrees found."
+    fi
+    echo
+}
+
+# ------------------------------------------------------------------------------
+# 🦊 CI/CD INTEGRATION & REAL-TIME MONITORING
+# ------------------------------------------------------------------------------
+
+action_ci_status() {
+    local target="$1"
+    resolve_branch_target "$target" "-N"
+    local branch="$RESOLVED_BRANCH"
+
+    local clean_branch="${branch#origin/}"
+    clean_branch="${clean_branch#upstream/}"
+
+    echo -e "\n  ${C_BOLD}${ICON_CI} CI/CD PIPELINE STATUS: ${C_CYAN}$clean_branch${C_RESET}\n"
+
+    # 1. Try Native GitHub CLI (gh)
+    if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+        echo -e "  ${C_DIM}Using GitHub CLI (gh)...${C_RESET}\n"
+        if gh run list --branch "$clean_branch" --limit 3 2>/dev/null; then
+            echo
+            return 0
+        fi
+    fi
+
+    # 2. Try Native GitLab CLI (glab)
+    if command -v glab >/dev/null 2>&1 && glab auth status >/dev/null 2>&1; then
+        echo -e "  ${C_DIM}Using GitLab CLI (glab)...${C_RESET}\n"
+        if glab ci status --branch "$clean_branch" 2>/dev/null; then
+            echo
+            return 0
+        fi
+    fi
+
+    # 3. REST API Fallback
+    local platform
+    platform=$(detect_remote_platform)
+    if [ -z "$platform" ]; then
+        render_error_box "Unable to detect remote platform" "Ensure remote origin points to GitHub or GitLab" "git remote -v"
+    fi
+
+    if [ "$platform" = "github" ]; then
+        local token repo
+        token=$(get_github_token)
+        repo=$(parse_github_repo)
+
+        if [ -z "$token" ]; then
+            print_warn "No GitHub Token configured."
+            echo -e "  ${C_DIM}Set GITHUB_TOKEN or install 'gh' CLI for instant CI integration.${C_RESET}\n"
+            return 1
+        fi
+
+        local res
+        res=$(curl -s -H "Authorization: token $token" -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/$repo/actions/runs?branch=$clean_branch&per_page=1" 2>/dev/null)
+
+        if [ -n "$res" ] && command -v jq >/dev/null 2>&1; then
+            local count
+            count=$(echo "$res" | jq '.total_count // 0' 2>/dev/null)
+            if [ "$count" -gt 0 ]; then
+                local w_name w_status w_conclusion w_id
+                w_name=$(echo "$res" | jq -r '.workflow_runs[0].name' 2>/dev/null)
+                w_status=$(echo "$res" | jq -r '.workflow_runs[0].status' 2>/dev/null)
+                w_conclusion=$(echo "$res" | jq -r '.workflow_runs[0].conclusion' 2>/dev/null)
+                w_id=$(echo "$res" | jq -r '.workflow_runs[0].id' 2>/dev/null)
+
+                printf "  Workflow:   %b%s%b\n" "$C_BOLD" "$w_name" "$C_RESET"
+                printf "  Run ID:     %s\n" "$w_id"
+                printf "  Status:     "
+                if [ "$w_status" = "completed" ]; then
+                    [ "$w_conclusion" = "success" ] && echo -e "${C_GREEN}${ICON_CHECK} SUCCESS${C_RESET}"
+                    [ "$w_conclusion" = "failure" ] && echo -e "${C_RED}${ICON_CROSS} FAILED${C_RESET}"
+                    [ "$w_conclusion" = "cancelled" ] && echo -e "${C_YELLOW}CANCELLED${C_RESET}"
+                else
+                    echo -e "${C_YELLOW}⏳ $w_status${C_RESET}"
+                fi
+                echo
+                return 0
+            fi
+        fi
+        print_info "No workflow runs found for branch '$clean_branch'"
+    fi
+    echo
+}
+
+action_realtime_ci() {
+    local target="$1"
+    local interval="${2:-$DEFAULT_REFRESH_INTERVAL}"
+    if ! [[ "$interval" =~ ^[0-9]+$ ]] || [ "$interval" -lt "$MIN_INTERVAL" ]; then
+        interval=$DEFAULT_REFRESH_INTERVAL
+    fi
+
+    resolve_branch_target "$target" "-R"
+    local branch="$RESOLVED_BRANCH"
+    local clean_branch="${branch#origin/}"
+
+    # Setup trap for clean exit
+    trap 'clear; echo -e "\n  ${C_YELLOW}Live monitoring stopped.${C_RESET}\n"; exit 0' INT TERM
+
+    local iter=0
+    while true; do
+        iter=$((iter + 1))
+        clear
+        echo -e "  ${C_BOLD}${C_CYAN}╔════════════════════════════════════════════════════════════════╗${C_RESET}"
+        echo -e "  ${C_BOLD}${C_CYAN}║${C_RESET}   ${C_RED}●${C_RESET} ${C_BOLD}LIVE CI/CD MONITOR${C_RESET}  ${C_DIM}(Press Ctrl+C to Exit)${C_RESET}               ${C_BOLD}${C_CYAN}║${C_RESET}"
+        echo -e "  ${C_BOLD}${C_CYAN}╚════════════════════════════════════════════════════════════════╝${C_RESET}\n"
+        echo -e "  ${C_HEADER}Branch:${C_RESET} ${C_BOLD}$clean_branch${C_RESET}  ${C_DIM}│ Refresh: ${interval}s │ Iteration: #$iter │ Time: $(date '+%H:%M:%S')${C_RESET}\n"
+
+        action_ci_status "$target" 2>/dev/null || true
+
+        for ((s=interval; s>0; s--)); do
+            printf "\r  ${C_DIM}Next update in %ds... (Press Ctrl+C to quit) ${C_RESET}" "$s"
+            sleep 1
+        done
+    done
+}
+
+# ------------------------------------------------------------------------------
+# 🎮 INTERACTIVE TUI (FZF Enhanced + Built-In Fallback)
+# ------------------------------------------------------------------------------
+
+interactive_mode() {
+    # Check if FZF is installed for supreme interactive experience
+    if command -v fzf >/dev/null 2>&1; then
+        local selection
+        selection=$(for ((i=1; i<=TOTAL_VISIBLE; i++)); do
+            printf "%-3s | %-6s | %-32s | %-8s | %-15s | %s\n" \
+                "${ROWS_ID[$i]}" "${ROWS_TYPE[$i]}" "${ROWS_BRANCH_TEXT[$i]}" "${ROWS_HASH[$i]}" "${ROWS_DATE[$i]}" "${ROWS_AUTHOR[$i]}"
+        done | fzf --ansi --header="[ENTER: Checkout] [CTRL-S: Show] [CTRL-X: Stats] [CTRL-D: Delete]" \
+                   --preview="git show --stat --color=always \$(echo {} | awk '{print \$7}') 2>/dev/null || git log -5 --oneline \$(echo {} | awk '{print \$5}')" \
+                   --bind="ctrl-s:execute(git show --stat \$(echo {} | awk '{print \$7}'))" \
+                   --height="70%" --reverse)
+
+        if [ -n "$selection" ]; then
+            local sel_id
+            sel_id=$(echo "$selection" | awk '{print $1}')
+            if [ -n "$sel_id" ]; then
+                action_checkout "$sel_id"
+            fi
+        fi
+        return 0
+    fi
+
+    # Built-in Interactive Menu Fallback
+    render_table
+    echo
+    echo -e "  ${C_BOLD}${ICON_TIP} INTERACTIVE MENU${C_RESET}"
+    echo -e "  ${C_CYAN}1)${C_RESET} Checkout Branch    ${C_CYAN}4)${C_RESET} Delete Branch    ${C_CYAN}7)${C_RESET} Team Velocity"
+    echo -e "  ${C_CYAN}2)${C_RESET} Show Details       ${C_CYAN}5)${C_RESET} Branch Stats     ${C_CYAN}8)${C_RESET} Check Conflicts"
+    echo -e "  ${C_CYAN}3)${C_RESET} Merge Branch       ${C_CYAN}6)${C_RESET} Compare Two      ${C_CYAN}0)${C_RESET} Exit"
+    echo
+    printf "  %bSelect option [1-8, 0 to exit]: %b" "$C_BOLD" "$C_RESET"
+    read -r choice
+
+    case "$choice" in
+        1) printf "  Enter ID to checkout: "; read -r tid; action_checkout "$tid" ;;
+        2) printf "  Enter ID to inspect: "; read -r tid; action_show "$tid" ;;
+        3) printf "  Enter ID to merge: "; read -r tid; action_merge "$tid" ;;
+        4) printf "  Enter ID to delete: "; read -r tid; action_delete "$tid" ;;
+        5) printf "  Enter ID for stats: "; read -r tid; action_stats "$tid" ;;
+        6) printf "  Enter comparison (ID1:ID2): "; read -r pair; action_compare "$pair" ;;
+        7) action_velocity ;;
+        8) printf "  Enter ID to test conflicts: "; read -r tid; action_conflicts "$tid" ;;
+        0) exit 0 ;;
+        *) render_error_box "Invalid selection" "Choose a number between 0 and 8" "git-record -i" ;;
+    esac
+}
+
+# ------------------------------------------------------------------------------
+# 📖 COMMAND LINE PARSER & MAIN DISPATCHER
+# ------------------------------------------------------------------------------
+
+show_help() {
+    cat << EOF
+${C_BOLD}╔══════════════════════════════════════════════════════════════════════════════╗
+║                     📘 GIT-RECORD v${VERSION} - CLI SUITE                       ║
+╚══════════════════════════════════════════════════════════════════════════════╝${C_RESET}
+
+${C_HEADER}DESCRIPTION:${C_RESET}
+  High-performance Git branch management, analytics, and workflow automation tool.
+
+${C_HEADER}BASIC USAGE:${C_RESET}
+  git-record [limit]               Display recent branch table (default: 10)
+  git-record 25                    Display latest 25 branches
+  git-record -l, --local           Show local branches only
+  git-record -r, --remote          Show remote branches only
+  git-record -a, --all             Show all branches without limits
+  git-record -f, --filter <query>  Filter branches by name, author, or message
+  git-record -u, --fetch           Fetch remote repository updates before rendering
+  git-record -i, --interactive     Launch interactive TUI / FZF branch selector
+
+${C_HEADER}WORKFLOW ACTIONS:${C_RESET}
+  -c, --checkout <ID/branch>       Checkout branch (auto-tracks remote branches)
+  -m, --merge <ID/branch>          Merge target branch into current branch
+  -d, --delete <ID/branch>         Safely delete local branch
+  -D, --force-delete <ID/branch>   Force delete local branch
+  -b, --bulk-delete <ID1,ID2...>   Bulk delete multiple branches with review prompt
+  -R, --rename <ID> [new-name]     Rename local branch safely
+  -k, --copy <ID/branch>           Copy branch commit hash to system clipboard
+
+${C_HEADER}INSPECTION & ANALYTICS:${C_RESET}
+  -s, --show <ID/branch>           Show commit details and diffstat
+  -X, --stats <ID/branch>          Deep metrics (ahead/behind, churn, top contributors)
+  -C, --compare <ID1:ID2>          Two-way comparison between branches
+  -M, --conflicts <ID> [base]      Predict potential merge conflicts in advance
+  -V, --velocity [days]            Team commit velocity and activity breakdown
+  -G, --graph                      Branch relationship topology tree
+  -A, --cleanup                    Smart cleanup auditor (finds merged & stale branches)
+  -T, --tags [limit]               List repository tags and releases
+  -L, --stash                      View stash stack with relative timestamps
+  -H, --history [limit]            Formatted direct commit log history
+  -S, --search <code/regex>        Search code content across all branches
+  -W, --worktrees                  List active Git worktrees
+
+${C_HEADER}CI/CD INTEGRATION:${C_RESET}
+  -N, --ci <ID/branch>             Check GitHub Actions or GitLab CI pipeline status
+  --watch-ci <ID> [interval]       Real-time live CI/CD monitoring dashboard
+
+${C_HEADER}SYSTEM & DIAGNOSTICS:${C_RESET}
+  --sys-info, --doctor             Show OS, platform, shell, git, and integration diagnostics
+  --no-color                       Disable colored output
+  -v, --version                    Display version and platform information
+  -h, --help                       Show this help manual
+
+${C_HEADER}EXAMPLES:${C_RESET}
+  git-record                       # Show latest 10 branches
+  git-record -c 2                  # Checkout branch #2 from list
+  git-record -X 3                  # Inspect deep statistics of branch #3
+  git-record -C 1:4                # Compare branch #1 against branch #4
+  git-record -M 5                  # Check if branch #5 will conflict with main
+  git-record -V 30                 # Team velocity for the past 30 days
+  git-record -A                    # Find and prune abandoned & merged branches
+  git-record --sys-info            # Display system environment & compatibility
+
+EOF
+    exit 0
+}
+
+main() {
+    # Check for standalone system diagnostics without requiring git repo
+    for arg in "$@"; do
+        if [ "$arg" = "--sys-info" ] || [ "$arg" = "--doctor" ] || [ "$arg" = "--info" ]; then
+            action_sys_info
+            exit 0
+        elif [ "$arg" = "-v" ] || [ "$arg" = "--version" ]; then
+            detect_os_environment
+            echo "git-record v${VERSION} (${OS_NAME} - ${OS_ARCH})"
+            exit 0
+        fi
+    done
+
+    # Verify we are in a valid git repo and get repo info
+    check_git_repo
+    get_repo_info
+
+    LIMIT=$DEFAULT_LIMIT
+    FILTER_NAME=""
+    FILTER_CODE=""
+    MODE="DEFAULT"
+    DO_FETCH=0
+    ONLY_LOCAL=0
+    ONLY_REMOTE=0
+
+    # Action flags
+    ACT_CHECKOUT=""
+    ACT_MERGE=""
+    ACT_DELETE=""
+    ACT_FORCE_DELETE=""
+    ACT_RENAME=""
+    ACT_SHOW=""
+    ACT_COPY_HASH=""
+    ACT_COMPARE=""
+    ACT_STATS=""
+    ACT_CONFLICTS=""
+    ACT_VELOCITY=""
+    ACT_GRAPH=""
+    ACT_CLEANUP=""
+    ACT_TAGS=""
+    ACT_STASH=""
+    ACT_WORKTREES=""
+    ACT_CI=""
+    ACT_REALTIME_CI=""
+    ACT_INTERACTIVE=0
+    ACT_BULK_DELETE=""
+
+    # Check for direct numeric argument: `git-record 20`
+    if [ "$#" -gt 0 ] && [[ "$1" =~ ^[0-9]+$ ]]; then
+        LIMIT="$1"
+        shift
+    fi
+
+    # Parse Long and Short Flags
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            -h|--help) show_help ;;
+            -v|--version) echo "git-record version $VERSION"; exit 0 ;;
+            --no-color) COLOR_MODE="never"; setup_colors; shift ;;
+            -u|--fetch) DO_FETCH=1; shift ;;
+            -l|--local) ONLY_LOCAL=1; shift ;;
+            -r|--remote) ONLY_REMOTE=1; shift ;;
+            -a|--all) LIMIT=0; shift ;;
+            -i|--interactive) ACT_INTERACTIVE=1; shift ;;
+            -f|--filter) FILTER_NAME="$2"; shift 2 ;;
+            -S|--search) FILTER_CODE="$2"; MODE="CODE_SEARCH"; shift 2 ;;
+            -H|--history)
+                MODE="HISTORY"
+                shift
+                if [ -n "$1" ] && [[ "$1" =~ ^[0-9]+$ ]]; then
+                    LIMIT="$1"
+                    shift
+                fi
+                ;;
+            -c|--checkout) ACT_CHECKOUT="$2"; shift 2 ;;
+            -m|--merge) ACT_MERGE="$2"; shift 2 ;;
+            -d|--delete) ACT_DELETE="$2"; shift 2 ;;
+            -D|--force-delete) ACT_FORCE_DELETE="$2"; shift 2 ;;
+            -b|--bulk-delete) ACT_BULK_DELETE="$2"; shift 2 ;;
+            -R|--rename)
+                ACT_RENAME="$2"
+                shift 2
+                if [ -n "$1" ] && [[ ! "$1" =~ ^- ]]; then
+                    RENAME_NEW_NAME="$1"
+                    shift
+                fi
+                ;;
+            -s|--show) ACT_SHOW="$2"; shift 2 ;;
+            -k|--copy) ACT_COPY_HASH="$2"; shift 2 ;;
+            -C|--compare) ACT_COMPARE="$2"; shift 2 ;;
+            -X|--stats) ACT_STATS="$2"; shift 2 ;;
+            -M|--conflicts) ACT_CONFLICTS="$2"; shift 2 ;;
+            -V|--velocity)
+                ACT_VELOCITY=1
+                shift
+                if [ -n "$1" ] && [[ "$1" =~ ^[0-9]+$ ]]; then
+                    VELOCITY_DAYS="$1"
+                    shift
+                fi
+                ;;
+            -G|--graph) ACT_GRAPH=1; shift ;;
+            -A|--cleanup|--prune) ACT_CLEANUP=1; shift ;;
+            -T|--tags)
+                ACT_TAGS=1
+                shift
+                if [ -n "$1" ] && [[ "$1" =~ ^[0-9]+$ ]]; then
+                    LIMIT="$1"
+                    shift
+                fi
+                ;;
+            -L|--stash) ACT_STASH=1; shift ;;
+            -W|--worktrees) ACT_WORKTREES=1; shift ;;
+            -N|--ci) ACT_CI="$2"; shift 2 ;;
+            --watch-ci)
+                ACT_REALTIME_CI="$2"
+                shift 2
+                if [ -n "$1" ] && [[ "$1" =~ ^[0-9]+$ ]]; then
+                    REALTIME_INTERVAL="$1"
+                    shift
+                fi
+                ;;
+            *)
+                if [[ "$1" =~ ^[0-9]+$ ]]; then
+                    LIMIT="$1"
+                    shift
+                else
+                    render_error_box "Unknown option: '$1'" "Use --help to view available flags and usage examples" "git-record --help"
+                fi
+                ;;
+        esac
+    done
+
+    # Fetch updates if requested
+    if [ "$DO_FETCH" -eq 1 ]; then
+        printf "  %b%s Fetching remote updates...%b\r" "$C_DIM" "$ICON_SYNC" "$C_RESET"
+        git fetch --all --prune --quiet 2>/dev/null || print_warn "Remote fetch timed out or failed. Continuing with local data."
+    fi
+
+    # Fast-path standalone features that do not need full branch table
+    if [ "$ACT_VELOCITY" = 1 ]; then
+        action_velocity "$VELOCITY_DAYS"
+        exit 0
+    fi
+    if [ "$ACT_GRAPH" = 1 ]; then
+        action_graph
+        exit 0
+    fi
+    if [ "$ACT_CLEANUP" = 1 ]; then
+        action_cleanup_audit
+        exit 0
+    fi
+    if [ "$ACT_TAGS" = 1 ]; then
+        action_tags "$LIMIT"
+        exit 0
+    fi
+    if [ "$ACT_STASH" = 1 ]; then
+        action_stash
+        exit 0
+    fi
+    if [ "$ACT_WORKTREES" = 1 ]; then
+        action_worktrees
+        exit 0
+    fi
+
+    # Expand limit if action references higher ID
+    for req_id in "$ACT_CHECKOUT" "$ACT_MERGE" "$ACT_DELETE" "$ACT_FORCE_DELETE" "$ACT_RENAME" "$ACT_SHOW" "$ACT_COPY_HASH" "$ACT_STATS" "$ACT_CONFLICTS" "$ACT_CI" "$ACT_REALTIME_CI"; do
+        if [[ "$req_id" =~ ^[0-9]+$ ]] && [ "$req_id" -gt "$LIMIT" ]; then
+            LIMIT=$req_id
+        fi
+    done
+
+    # Load branch and ref data
+    load_records
+
+    # Dispatch requested actions
+    if [ "$ACT_INTERACTIVE" -eq 1 ]; then
+        interactive_mode
+        exit 0
+    elif [ -n "$ACT_CHECKOUT" ]; then
+        action_checkout "$ACT_CHECKOUT"
+        exit 0
+    elif [ -n "$ACT_MERGE" ]; then
+        action_merge "$ACT_MERGE"
+        exit 0
+    elif [ -n "$ACT_DELETE" ]; then
+        action_delete "$ACT_DELETE" 0
+        exit 0
+    elif [ -n "$ACT_FORCE_DELETE" ]; then
+        action_delete "$ACT_FORCE_DELETE" 1
+        exit 0
+    elif [ -n "$ACT_BULK_DELETE" ]; then
+        action_bulk_delete "$ACT_BULK_DELETE"
+        exit 0
+    elif [ -n "$ACT_RENAME" ]; then
+        action_rename "$ACT_RENAME" "$RENAME_NEW_NAME"
+        exit 0
+    elif [ -n "$ACT_SHOW" ]; then
+        action_show "$ACT_SHOW"
+        exit 0
+    elif [ -n "$ACT_COPY_HASH" ]; then
+        action_copy_hash "$ACT_COPY_HASH"
+        exit 0
+    elif [ -n "$ACT_COMPARE" ]; then
+        action_compare "$ACT_COMPARE"
+        exit 0
+    elif [ -n "$ACT_STATS" ]; then
+        action_stats "$ACT_STATS"
+        exit 0
+    elif [ -n "$ACT_CONFLICTS" ]; then
+        action_conflicts "$ACT_CONFLICTS"
+        exit 0
+    elif [ -n "$ACT_CI" ]; then
+        action_ci_status "$ACT_CI"
+        exit 0
+    elif [ -n "$ACT_REALTIME_CI" ]; then
+        action_realtime_ci "$ACT_REALTIME_CI" "${REALTIME_INTERVAL:-5}"
+        exit 0
+    fi
+
+    # Default view: Display Table & Command Center
+    render_table
+    print_command_center
+}
+
+# Execute main entrypoint
+main "$@"
